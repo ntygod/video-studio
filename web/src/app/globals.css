@@ -1,0 +1,410 @@
+@import "tailwindcss";
+
+/*
+ * Video Studio 设计令牌
+ * ---------------------
+ * 暗色优先：媒体创作工具里图片和视频只有在近黑背景上才显色准确，浅色是可选项。
+ *
+ * 字号梯度（组件里直接写 text-[Npx]，只允许这五档）：
+ *   11px 辅助说明 · 12px 次要文本 · 13px 正文/控件 · 15px 小标题 · 20px 页面标题
+ *
+ * 命名约定：
+ *   surface 系列  = 从底到上的三层表面
+ *   line 系列     = 描边
+ *   ink/text/muted/faint = 文字由强到弱
+ *   action 系列   = 主操作色（唯一的强调色）
+ */
+
+@font-face {
+    font-family: "Bricolage Grotesque";
+    src: url("/fonts/bricolage-grotesque-latin-wght-normal.woff2") format("woff2");
+    font-display: swap;
+    font-style: normal;
+    font-weight: 200 800;
+}
+
+@font-face {
+    font-family: "Syne";
+    src: url("/fonts/syne-latin-wght-normal.woff2") format("woff2");
+    font-display: swap;
+    font-style: normal;
+    font-weight: 400 800;
+}
+
+:root,
+html[data-theme="dark"] {
+    /* 表面 */
+    --studio-bg: #050606;
+    --studio-surface: #0c0e0d;
+    --studio-surface-raised: #121512;
+    --studio-surface-hover: #181c18;
+
+    /* 描边 */
+    --studio-line: #242824;
+    --studio-line-strong: #363c36;
+
+    /* 文字 */
+    --studio-ink: #f3f6f0;
+    --studio-text: #c2c9c0;
+    --studio-muted: #858d84;
+    --studio-faint: #727a71;
+
+    /* 主操作色 */
+    --studio-action: #c7f36b;
+    --studio-action-hover: #d6ff82;
+    --studio-action-emphasis: #afda54;
+    --studio-action-foreground: #11170a;
+    --studio-action-soft: color-mix(in srgb, var(--studio-action) 16%, transparent);
+    --studio-action-line: color-mix(in srgb, var(--studio-action) 36%, transparent);
+
+    /* 语义色 */
+    --studio-success: #5ed69b;
+    --studio-warning: #f3c969;
+    --studio-danger: #ff7c7c;
+    --studio-info: #75b7f5;
+
+    /* 圆角 */
+    --studio-r-sm: 6px;
+    --studio-r-md: 10px;
+    --studio-r-lg: 16px;
+
+    /* 阴影 */
+    --studio-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --studio-shadow: 0 12px 32px rgba(0, 0, 0, 0.36);
+
+    /* 品牌标识渐变 */
+    --studio-brand-start: #8db2ff;
+    --studio-brand-end: #ff95d1;
+
+    --studio-scrollbar: rgba(148, 163, 184, 0.45);
+
+    /* 动效 */
+    --studio-ease: cubic-bezier(0.16, 1, 0.3, 1);
+    --studio-dur: 180ms;
+
+    color-scheme: dark;
+}
+
+html[data-theme="light"] {
+    --studio-bg: #f4f5f2;
+    --studio-surface: #ffffff;
+    --studio-surface-raised: #ecefe9;
+    --studio-surface-hover: #e5e9e2;
+
+    --studio-line: #dce1da;
+    --studio-line-strong: #c7cec4;
+
+    --studio-ink: #171a17;
+    --studio-text: #394037;
+    --studio-muted: #596157;
+    --studio-faint: #687066;
+
+    --studio-action: #526f1e;
+    --studio-action-hover: #648625;
+    --studio-action-emphasis: #405718;
+    --studio-action-foreground: #ffffff;
+    --studio-action-soft: color-mix(in srgb, var(--studio-action) 12%, transparent);
+    --studio-action-line: color-mix(in srgb, var(--studio-action) 32%, transparent);
+
+    --studio-success: #1f7a4d;
+    --studio-warning: #8a5c00;
+    --studio-danger: #b42318;
+    --studio-info: #28679b;
+
+    --studio-shadow-sm: 0 1px 2px rgba(23, 26, 23, 0.06);
+    --studio-shadow: 0 8px 24px rgba(23, 26, 23, 0.08);
+
+    --studio-brand-start: #5d8fff;
+    --studio-brand-end: #f46ab8;
+
+    --studio-scrollbar: rgba(71, 85, 105, 0.45);
+
+    color-scheme: light;
+}
+
+/* Tailwind 的 bg-*/text-* 也能取到主题色，供少数需要走 utility 的场景使用。 */
+@theme inline {
+    --color-background: var(--studio-bg);
+    --color-foreground: var(--studio-ink);
+    --color-border: var(--studio-line);
+}
+
+@layer base {
+    /*
+     * Tailwind v4 的 border 工具默认用 currentColor。这里给出统一的默认描边色，
+     * 让只写 `border` 不写颜色的地方也落在设计系统内。
+     */
+    *,
+    ::before,
+    ::after {
+        border-color: var(--studio-line);
+    }
+
+    html,
+    body {
+        height: 100%;
+        overflow: hidden;
+    }
+
+    body {
+        background: var(--studio-bg);
+        color: var(--studio-text);
+        -webkit-font-smoothing: antialiased;
+    }
+
+    /* 统一焦点样式：键盘可达性靠它，不允许各组件各写一套。 */
+    :focus-visible {
+        outline: 2px solid var(--studio-action-line);
+        outline-offset: 2px;
+    }
+
+    textarea {
+        resize: none;
+    }
+
+    textarea::-webkit-resizer {
+        display: none;
+    }
+}
+
+@layer utilities {
+    /* 滚动容器：隐藏滚动条但保留滚动能力。 */
+    .hide-scrollbar {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+    }
+
+    .hide-scrollbar::-webkit-scrollbar {
+        display: none;
+    }
+
+    /* 细滚动条，用于日志、消息流等需要位置感的地方。 */
+    .thin-scrollbar {
+        scrollbar-color: var(--studio-scrollbar) transparent;
+        scrollbar-width: thin;
+    }
+
+    .thin-scrollbar::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+    }
+
+    .thin-scrollbar::-webkit-scrollbar-thumb {
+        background: var(--studio-scrollbar);
+        border-radius: 999px;
+    }
+}
+
+/* ── 全局侧栏（项目库 / 任务 / 设置） ─────────────────────────────── */
+
+.studio-shell-bg {
+    background: var(--studio-bg);
+}
+
+.studio-sidebar-rail {
+    background: var(--studio-surface);
+    border-right: 1px solid var(--studio-line);
+}
+
+.sidebar-brand-mark {
+    display: inline-flex;
+    width: 100%;
+    height: 100%;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+}
+
+.sidebar-rail-item {
+    display: flex;
+    min-height: 58px;
+    width: 100%;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    border-radius: var(--studio-r-sm);
+    padding-inline: 4px;
+    color: var(--studio-muted);
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 1.2;
+    text-align: center;
+    transition:
+        background-color var(--studio-dur) var(--studio-ease),
+        color var(--studio-dur) var(--studio-ease);
+}
+
+.sidebar-rail-icon {
+    display: inline-flex;
+    width: 28px;
+    height: 28px;
+    align-items: center;
+    justify-content: center;
+}
+
+.sidebar-rail-label {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sidebar-rail-item-inactive:hover,
+.sidebar-rail-item-inactive:focus-visible {
+    background: var(--studio-surface-hover);
+    color: var(--studio-ink);
+}
+
+.sidebar-rail-item-active {
+    background: var(--studio-action);
+    color: var(--studio-action-foreground);
+}
+
+.sidebar-rail-item-active svg,
+.sidebar-rail-item-active .sidebar-rail-label {
+    color: var(--studio-action-foreground);
+}
+
+.sidebar-rail-action,
+.sidebar-user-dot {
+    display: inline-flex;
+    width: 36px;
+    height: 36px;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--studio-r-sm);
+    background: transparent;
+    color: var(--studio-muted);
+    font-size: 12px;
+    font-weight: 600;
+    transition:
+        background-color var(--studio-dur) var(--studio-ease),
+        color var(--studio-dur) var(--studio-ease);
+}
+
+.sidebar-rail-action:hover,
+.sidebar-user-dot:hover {
+    background: var(--studio-surface-hover);
+    color: var(--studio-ink);
+}
+
+/* ── 对话 ──────────────────────────────────────────────────────── */
+
+.chat-msg-in {
+    animation: chat-msg-in 280ms var(--studio-ease) both;
+}
+
+@keyframes chat-msg-in {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.chat-composer-box {
+    transition:
+        border-color var(--studio-dur) var(--studio-ease),
+        box-shadow var(--studio-dur) var(--studio-ease);
+}
+
+.chat-composer-box:focus-within {
+    border-color: var(--studio-action-line);
+    box-shadow: 0 0 0 3px var(--studio-action-soft);
+}
+
+.chat-composer-textarea {
+    scrollbar-width: thin;
+}
+
+/* ── AI 回复的 Markdown 排版 ────────────────────────────────────── */
+
+.markdown-body p {
+    margin: 0.25rem 0;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+    margin: 0.25rem 0;
+    padding-left: 1.25rem;
+    list-style: revert;
+}
+
+.markdown-body li {
+    margin: 0.15rem 0;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4 {
+    margin: 0.5rem 0 0.25rem;
+    font-weight: 600;
+    line-height: 1.4;
+}
+
+.markdown-body code {
+    border: 1px solid var(--studio-line);
+    border-radius: 4px;
+    background: var(--studio-surface);
+    padding: 0 4px;
+    font-size: 12px;
+}
+
+.markdown-body pre {
+    margin: 0.4rem 0;
+    overflow-x: auto;
+    border-radius: var(--studio-r-sm);
+    background: var(--studio-bg);
+    padding: 10px;
+}
+
+.markdown-body pre code {
+    border: 0;
+    background: transparent;
+    padding: 0;
+}
+
+.markdown-body blockquote {
+    margin: 0.4rem 0;
+    border-left: 3px solid var(--studio-action-line);
+    color: var(--studio-muted);
+    padding-left: 10px;
+}
+
+.markdown-body a {
+    color: var(--studio-action);
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+.markdown-body table {
+    margin: 0.4rem 0;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.markdown-body th,
+.markdown-body td {
+    border: 1px solid var(--studio-line);
+    padding: 4px 8px;
+}
+
+.markdown-body strong {
+    font-weight: 600;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
+}

@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# Node / Next.js
+node_modules/
+.next/
+*.tsbuildinfo
+
+# 日志
+*.log
+*.err
+
+# 运行时数据（数据库 / 媒体 / 渲染中间文件）
+data/studio.db*
+data/media/
+data/work/

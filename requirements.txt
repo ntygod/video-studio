@@ -1,0 +1,13 @@
+fastapi
+uvicorn[standard]
+httpx
+pydantic-settings
+sqlalchemy>=2.0
+alembic
+python-multipart
+tenacity
+edge-tts
+static-ffmpeg
+pytest
+pytest-cov
+respx
