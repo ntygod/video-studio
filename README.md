@@ -69,7 +69,15 @@ web/src/
 - **视图与选中单元存在 URL 上**（路由段 + `?unit=`），保证刷新、后退、分享链接都能恢复。
 - **antd 只做控件**，容器与布局用 Tailwind + `--studio-*` 令牌自绘。详见 `docs/design-tokens.md`。
 
-## 文档
+## 架构演进
+
+V2 不采用一次性重写，而是从可靠性基线开始，按一条真实视频生产闭环纵向替换现有实现：
+
+- `docs/product-contract.md`：产品边界、不可破坏的不变量和质量指标
+- `docs/architecture-v2.md`：Creative Kernel、领域包、Task Runtime 和目标写入路径
+- `docs/migration-plan.md`：M0–M7 的实施顺序、验收标准和当前进度
+
+## 其他文档
 
 - `docs/ui-redesign.md`：UI 重构方案与分阶段计划
 - `docs/design-tokens.md`：设计令牌与使用约定

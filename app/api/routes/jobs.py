@@ -6,10 +6,11 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from app.application.job_engine import get_job_engine
 from app.api.logging import current_request_id
+from app.application.job_engine import get_job_engine
+from app.application.jobs.events import list_job_events_after
+from app.application.jobs.lifecycle import reset_job_for_retry
 from app.store import UnitOfWork
-from app.store.repositories import ConflictError
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
@@ -51,38 +52,81 @@ def post_job(data: JobCreate, request: Request):
 
 @router.get("/stream")
 def stream_jobs(request: Request, project_id: str | None = None):
-    """任务 SSE：job.progress / job.event / job.done（1s 轮询 diff 推送）。"""
+    """任务 SSE：发送进度快照、持久化事件与终态。
+
+    任务列表查询只返回任务摘要，不包含 ``job_events``。事件通过独立的游标查询
+    读取，避免此前 ``job.get("events")`` 永远为空而导致前端收不到 ``job.event``。
+    """
+
     database = request.app.state.database
 
     def event_source():
         seen_jobs: dict[str, tuple[float, str]] = {}
-        seen_events: set[str] = set()
         sent_done: set[str] = set()
+        event_cursor = (0.0, "")
         try:
             while True:
                 with UnitOfWork(database) as uow:
                     jobs = uow.jobs.list(project_id=project_id)
-                    for job in jobs:
-                        progress = float(job["progress"] or 0.0)
-                        previous = seen_jobs.get(job["id"])
-                        if previous is None or previous[0] != progress or previous[1] != job["status"]:
-                            seen_jobs[job["id"]] = (progress, job["status"])
-                            payload = {
+
+                progress_frames: list[dict[str, Any]] = []
+                done_frames: list[dict[str, Any]] = []
+                for job in jobs:
+                    progress = float(job["progress"] or 0.0)
+                    previous = seen_jobs.get(job["id"])
+                    if (
+                        previous is None
+                        or previous[0] != progress
+                        or previous[1] != job["status"]
+                    ):
+                        seen_jobs[job["id"]] = (progress, job["status"])
+                        progress_frames.append(
+                            {
                                 "job_id": job["id"],
                                 "progress": progress,
                                 "status": job["status"],
                                 "parent_job_id": job.get("parent_job_id"),
                             }
-                            yield f"event: job.progress\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
-                        for event in job.get("events") or []:
-                            if event["id"] in seen_events:
-                                continue
-                            seen_events.add(event["id"])
-                            yield f"event: job.event\ndata: {json.dumps(event, ensure_ascii=False)}\n\n"
-                        if job["status"] in ("succeeded", "failed", "canceled") and job["id"] not in sent_done:
-                            sent_done.add(job["id"])
-                            done = {"job_id": job["id"], "status": job["status"], "result": job.get("result")}
-                            yield f"event: job.done\ndata: {json.dumps(done, ensure_ascii=False)}\n\n"
+                        )
+
+                    if (
+                        job["status"] in ("succeeded", "failed", "canceled")
+                        and job["id"] not in sent_done
+                    ):
+                        sent_done.add(job["id"])
+                        done_frames.append(
+                            {
+                                "job_id": job["id"],
+                                "status": job["status"],
+                                "result": job.get("result"),
+                            }
+                        )
+
+                for payload in progress_frames:
+                    yield (
+                        "event: job.progress\n"
+                        f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                    )
+
+                events = list_job_events_after(
+                    database,
+                    project_id=project_id,
+                    after_created_at=event_cursor[0],
+                    after_id=event_cursor[1],
+                )
+                for event in events:
+                    event_cursor = (float(event["created_at"]), str(event["id"]))
+                    yield (
+                        "event: job.event\n"
+                        f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                    )
+
+                for payload in done_frames:
+                    yield (
+                        "event: job.done\n"
+                        f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                    )
+
                 yield ": keepalive\n\n"
                 time.sleep(1)
         except GeneratorExit:
@@ -112,10 +156,8 @@ def cancel_job(job_id: str, request: Request):
 
 @router.post("/{job_id}/retry")
 def retry_job(job_id: str, request: Request):
-    with UnitOfWork(request.app.state.database) as uow:
-        job = uow.jobs.get(job_id)
-        if job["status"] not in ("failed", "canceled"):
-            raise ConflictError("只有失败或已取消的任务可以重试")
-        updated = uow.jobs.update_state(job_id, "queued", progress=0.0, error="")
+    database = request.app.state.database
+    reset_job_for_retry(database, job_id)
     get_job_engine(request.app).submit(job_id)
-    return updated
+    with UnitOfWork(database) as uow:
+        return uow.jobs.get(job_id)
