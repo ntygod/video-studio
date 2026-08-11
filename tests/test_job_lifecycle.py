@@ -4,6 +4,7 @@ import time
 import pytest
 from sqlalchemy import text
 
+from app.api.routes.jobs import _job_event_sse_id, _parse_job_event_sse_id
 from app.application.jobs.events import list_job_events_after
 from app.application.jobs.lifecycle import reset_job_for_retry
 from app.store import UnitOfWork
@@ -91,3 +92,17 @@ def test_job_event_cursor_returns_persisted_events(app, project):
     )
     assert [event["message"] for event in later] == ["第三条"]
     assert first["id"] != second["id"]
+
+
+def test_job_event_sse_id_round_trip():
+    event = {
+        "id": "event-abc",
+        "created_at": 1_700_000_123.456789,
+    }
+
+    encoded = _job_event_sse_id(event)
+    timestamp, event_id = _parse_job_event_sse_id(encoded)
+
+    assert timestamp == event["created_at"]
+    assert event_id == event["id"]
+    assert _parse_job_event_sse_id("not-a-job-event") == (0.0, "")

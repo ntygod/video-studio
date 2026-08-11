@@ -13,22 +13,10 @@ import {
     type JobDetail,
 } from "@/services/api";
 import { API_BASE } from "@/services/api/http";
+import { applyJobStreamEvent, type JobStreamEvent } from "@/services/queries/job-stream-state";
 import { qk } from "@/services/queries/keys";
 
 const ACTIVE_POLL_MS = 2000;
-
-type JobStreamEvent = {
-    type: "job.progress" | "job.event" | "job.done";
-    job_id: string;
-    progress?: number;
-    status?: string;
-    result?: unknown;
-    message?: string;
-    level?: string;
-    stage?: string;
-    created_at?: number;
-    parent_job_id?: string | null;
-};
 
 /**
  * 订阅任务 SSE：job.progress / job.event / job.done 直接写进 React Query 缓存。
@@ -47,46 +35,41 @@ export function useJobStream(projectId?: string) {
             client.setQueryData<Job[]>(listKey, (items) => {
                 const list = items || [];
                 const index = list.findIndex((job) => job.id === event.job_id);
-                const base = index >= 0 ? list[index] : ({ id: event.job_id, project_id: projectId || "", unit_id: null, job_type: "", status: "queued", progress: 0, cancel_requested: false, payload: {}, result: null, error: "", created_at: 0, updated_at: 0 } as Job);
+                const base =
+                    index >= 0
+                        ? list[index]
+                        : ({
+                              id: event.job_id,
+                              project_id: projectId || "",
+                              unit_id: null,
+                              job_type: "",
+                              status: "queued",
+                              progress: 0,
+                              cancel_requested: false,
+                              payload: {},
+                              result: null,
+                              error: "",
+                              created_at: 0,
+                              updated_at: 0,
+                          } as Job);
                 const next: Job = {
                     ...base,
                     status: (event.status as Job["status"]) || base.status,
                     progress: event.progress ?? base.progress,
                     result: (event.result as Job["result"]) ?? base.result,
-                    updated_at: event.created_at ? event.created_at / 1000 : Date.now() / 1000,
+                    // 后端时间戳已经是 Unix 秒，不能再次除以 1000。
+                    updated_at: event.created_at ?? Date.now() / 1000,
                 };
                 const updated = [...list];
                 if (index >= 0) updated[index] = next;
                 else updated.push(next);
                 return updated;
             });
+
             const detailKey = qk.job(event.job_id);
             client.setQueryData<JobDetail>(detailKey, (current) => {
                 if (!current) return current;
-                const base = {
-                    ...current,
-                    status: (event.status as Job["status"]) || current.status,
-                    progress: event.progress ?? current.progress,
-                    result: (event.result as Job["result"]) ?? current.result,
-                };
-                if (event.type === "job.event") {
-                    return {
-                        ...base,
-                        events: [
-                            ...(current.events || []),
-                            {
-                                id: `sse-${current.events?.length || 0}`,
-                                job_id: event.job_id,
-                                level: (event.level || "info") as NonNullable<JobDetail["events"]>[number]["level"],
-                                stage: event.stage || "",
-                                message: event.message || "",
-                                progress: event.progress ?? null,
-                                created_at: event.created_at || Date.now() / 1000,
-                            },
-                        ],
-                    };
-                }
-                return base;
+                return applyJobStreamEvent(current, event);
             });
         };
 

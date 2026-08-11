@@ -14,6 +14,26 @@ from app.store import UnitOfWork
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
+_JOB_EVENT_ID_PREFIX = "job-event:"
+
+
+def _job_event_sse_id(event: dict[str, Any]) -> str:
+    return (
+        f"{_JOB_EVENT_ID_PREFIX}{float(event['created_at'])}:"
+        f"{event['id']}"
+    )
+
+
+def _parse_job_event_sse_id(value: str | None) -> tuple[float, str]:
+    value = (value or "").strip()
+    if not value.startswith(_JOB_EVENT_ID_PREFIX):
+        return (0.0, "")
+    try:
+        timestamp, event_id = value[len(_JOB_EVENT_ID_PREFIX) :].split(":", 1)
+        return (float(timestamp), event_id)
+    except (TypeError, ValueError):
+        return (0.0, "")
+
 
 class JobCreate(BaseModel):
     project_id: str
@@ -59,11 +79,14 @@ def stream_jobs(request: Request, project_id: str | None = None):
     """
 
     database = request.app.state.database
+    initial_event_cursor = _parse_job_event_sse_id(
+        request.headers.get("last-event-id")
+    )
 
     def event_source():
         seen_jobs: dict[str, tuple[float, str]] = {}
         sent_done: set[str] = set()
-        event_cursor = (0.0, "")
+        event_cursor = initial_event_cursor
         try:
             while True:
                 with UnitOfWork(database) as uow:
@@ -117,6 +140,7 @@ def stream_jobs(request: Request, project_id: str | None = None):
                 for event in events:
                     event_cursor = (float(event["created_at"]), str(event["id"]))
                     yield (
+                        f"id: {_job_event_sse_id(event)}\n"
                         "event: job.event\n"
                         f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
                     )
