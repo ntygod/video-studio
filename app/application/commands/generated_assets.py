@@ -39,11 +39,23 @@ def _fingerprint(value: Any, prefix: str) -> dict[str, Any]:
 def job_asset_persistence_attempt(
     database,
     job_id: str,
+    slot: str | None = None,
 ) -> tuple[dict[str, Any] | None, str]:
-    """Reuse any successful Asset output before another expensive generation."""
+    """Reuse a successful Job output, optionally scoped to a batch slot."""
+
+    base_key = f"job:{job_id}:asset"
+    if slot:
+        safe_slot = "".join(
+            character
+            for character in str(slot)
+            if character.isalnum() or character in "-_"
+        )
+        if not safe_slot:
+            raise ValueError("asset persistence slot cannot be empty")
+        base_key += f":{safe_slot}"
 
     with UnitOfWork(database) as uow:
-        rows = uow.session.scalars(
+        statement = (
             select(OperationLogRow)
             .where(
                 OperationLogRow.operation_type.in_(
@@ -56,7 +68,14 @@ def job_asset_persistence_attempt(
                 OperationLogRow.created_at,
                 OperationLogRow.id,
             )
-        ).all()
+        )
+        if slot:
+            statement = statement.where(
+                OperationLogRow.idempotency_key.like(
+                    f"{base_key}:%"
+                )
+            )
+        rows = uow.session.scalars(statement).all()
         for row in rows:
             if row.status != "succeeded":
                 continue
@@ -76,7 +95,7 @@ def job_asset_persistence_attempt(
         )
         if running is not None and running.idempotency_key:
             return None, str(running.idempotency_key)
-        return None, f"job:{job_id}:asset:{len(rows) + 1}"
+        return None, f"{base_key}:{len(rows) + 1}"
 
 
 @dataclass(slots=True)
@@ -89,11 +108,7 @@ class _GeneratedAssetBase:
     mime_type: str = "application/octet-stream"
     generation: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
-    _operation_id: str | None = field(
-        default=None,
-        init=False,
-        repr=False,
-    )
+    _operation_id: str | None = field(default=None, init=False, repr=False)
 
     risk_level = "low"
     target_type = "project"
@@ -153,10 +168,7 @@ class _GeneratedAssetBase:
         except Exception:
             probed = {}
         try:
-            generated_thumb = self.media_store.make_thumb(
-                uri,
-                self.mime_type,
-            )
+            generated_thumb = self.media_store.make_thumb(uri, self.mime_type)
             if generated_thumb:
                 thumb_uri = generated_thumb
         except Exception:
@@ -183,26 +195,17 @@ class _GeneratedAssetBase:
         )
 
     @staticmethod
-    def _execution(
-        asset: dict[str, Any],
-        cleanup,
-    ) -> OperationExecution:
+    def _execution(asset: dict[str, Any], cleanup) -> OperationExecution:
         snapshot = deepcopy(asset)
         return OperationExecution(
             result=snapshot,
             audit_result=snapshot,
-            affected_entities=[
-                {"type": "asset", "id": asset["id"]}
-            ],
+            affected_entities=[{"type": "asset", "id": asset["id"]}],
             inverse_operation=None,
             on_rollback=cleanup,
         )
 
-    def replay(
-        self,
-        uow: UnitOfWork,
-        audit_result: Any,
-    ) -> dict[str, Any]:
+    def replay(self, uow: UnitOfWork, audit_result: Any) -> dict[str, Any]:
         return deepcopy(audit_result)
 
 
@@ -259,9 +262,7 @@ class PersistGeneratedAssetCommand(_GeneratedAssetBase):
             raise
         return self._execution(
             asset,
-            lambda stored_uri=uri: self.media_store.delete_asset(
-                stored_uri
-            ),
+            lambda stored_uri=uri: self.media_store.delete_asset(stored_uri),
         )
 
 
@@ -307,9 +308,7 @@ class PersistGeneratedFileAssetCommand(_GeneratedAssetBase):
             raise
         return self._execution(
             asset,
-            lambda stored_uri=uri: self.media_store.delete_asset(
-                stored_uri
-            ),
+            lambda stored_uri=uri: self.media_store.delete_asset(stored_uri),
         )
 
 
