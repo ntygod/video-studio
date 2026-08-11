@@ -7,9 +7,10 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from app.application.agent.loop import run_turn
-from app.application.job_engine import get_job_engine
 from app.api.logging import request_id_var
+from app.application.agent.loop import run_turn
+from app.application.agent.revert import revert_agent_turn
+from app.application.job_engine import get_job_engine
 from app.store import UnitOfWork
 
 router = APIRouter(tags=["conversations"])
@@ -238,8 +239,7 @@ def cancel_turn(turn_id: str, request: Request):
 
 @router.post("/api/turns/{turn_id}/revert")
 def revert_turn(turn_id: str, request: Request):
-    with UnitOfWork(request.app.state.database) as uow:
-        return uow.agent_turns.revert(turn_id)
+    return revert_agent_turn(request.app.state.database, turn_id)
 
 
 @router.get("/api/turns/{turn_id}")
