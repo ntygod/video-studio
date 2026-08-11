@@ -149,7 +149,9 @@ function FreshnessItem({
     onRegenerate: (artifactId: string) => void;
 }) {
     const meta = freshnessMeta(item.status);
-    const versionCount = item.stale_from_version_ids.length;
+    const invalidInputCount =
+        item.stale_from_version_ids.length +
+        item.blocked_by_asset_ids.length;
 
     return (
         <article className="px-4 py-4">
@@ -178,14 +180,14 @@ function FreshnessItem({
                     >
                         {freshnessReason(item.status, item.reason)}
                     </Text>
-                    {versionCount ? (
+                    {invalidInputCount ? (
                         <Text
                             as="p"
                             variant="caption"
                             tone="faint"
                             className="mt-1"
                         >
-                            关联 {versionCount} 个已变化或缺失的输入版本
+                            关联 {invalidInputCount} 个已变化或缺失的输入
                         </Text>
                     ) : null}
                     <div className="mt-2 flex flex-wrap items-center gap-2">

@@ -15,6 +15,7 @@ export type ArtifactFreshness = {
     status: ArtifactFreshnessStatus;
     reason: string;
     stale_from_version_ids: string[];
+    blocked_by_asset_ids: string[];
     detected_at: number | null;
     updated_at: number;
 };

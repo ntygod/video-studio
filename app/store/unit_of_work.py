@@ -9,11 +9,11 @@ from .repositories import (
     ProposalRepository,
     ProviderRepository,
     SearchRepository,
-    UnitRepository,
 )
 from .semantic_graph_repository import (
     SemanticArtifactGraphRepository,
 )
+from .unit_repository import SemanticUnitRepository
 
 
 class UnitOfWork:
@@ -24,7 +24,7 @@ class UnitOfWork:
     def __enter__(self):
         self.session = self.database.session_factory()
         self.projects = ProjectRepository(self.session)
-        self.units = UnitRepository(self.session)
+        self.units = SemanticUnitRepository(self.session)
         self.conversations = ConversationRepository(self.session)
         self.artifacts = SchemaAwareArtifactRepository(self.session)
         self.proposals = ProposalRepository(self.session)

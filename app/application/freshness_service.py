@@ -27,6 +27,7 @@ FRESHNESS_PRIORITY = {
 def _freshness_item(
     artifact: ArtifactRow,
     row: ArtifactFreshnessRow | None,
+    blocked_by_asset_ids: list[str],
 ) -> dict[str, Any]:
     if row is None:
         status = "fresh"
@@ -54,6 +55,7 @@ def _freshness_item(
         "status": status,
         "reason": reason,
         "stale_from_version_ids": stale_from_version_ids,
+        "blocked_by_asset_ids": blocked_by_asset_ids,
         "detected_at": detected_at,
         "updated_at": updated_at,
     }
@@ -65,12 +67,7 @@ def list_project_artifact_freshness(
     *,
     include_fresh: bool = False,
 ) -> dict[str, Any]:
-    """Return counts plus ordered Artifact freshness rows for one project.
-
-    The default response is deliberately actionable: fresh rows contribute to
-    counts but are omitted from ``items``. Workbench surfaces can therefore
-    poll one compact endpoint instead of issuing one request per Artifact.
-    """
+    """Return counts plus ordered Artifact freshness rows for one project."""
 
     uow.projects.get(project_id)
     artifacts = uow.session.scalars(
@@ -93,9 +90,16 @@ def list_project_artifact_freshness(
     counts = {status: 0 for status in FRESHNESS_STATUSES}
     items: list[dict[str, Any]] = []
     for artifact in artifacts:
+        row = by_artifact.get(artifact.id)
+        blocked_by_asset_ids = (
+            uow.artifact_graph.blocking_asset_ids(artifact.id)
+            if row is not None and row.status == "blocked"
+            else []
+        )
         item = _freshness_item(
             artifact,
-            by_artifact.get(artifact.id),
+            row,
+            blocked_by_asset_ids,
         )
         status = str(item["status"])
         counts[status] = counts.get(status, 0) + 1

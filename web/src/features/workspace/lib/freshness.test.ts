@@ -27,6 +27,7 @@ function item(
         status,
         reason: "",
         stale_from_version_ids: [],
+        blocked_by_asset_ids: [],
         detected_at: updatedAt,
         updated_at: updatedAt,
     };
