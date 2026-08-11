@@ -33,17 +33,6 @@ def pick_edit_plan_artifact(
     return min(candidates, key=key)
 
 
-def _pick_edit_plan(
-    artifacts: list[dict[str, Any]],
-) -> dict[str, Any] | None:
-    selected = pick_edit_plan_artifact(artifacts)
-    if selected is None:
-        return None
-    return (selected.get("current_version") or {}).get(
-        "payload"
-    )
-
-
 def _clip_duration(
     asset: dict[str, Any],
     decision: dict[str, Any],
@@ -70,6 +59,16 @@ def compile_timeline(
     width = int(params.get("width", 1080))
     height = int(params.get("height", 1920))
     fps = int(params.get("fps", 30))
+    raw_replacements = params.get("asset_replacements") or {}
+    replacements = (
+        {
+            str(source): str(target)
+            for source, target in raw_replacements.items()
+            if str(source) and str(target)
+        }
+        if isinstance(raw_replacements, dict)
+        else {}
+    )
     artifacts = uow.artifacts.list(project_id, unit_id=unit_id)
     assets = uow.assets.list(project_id, unit_id=unit_id)
     asset_map = {asset["id"]: asset for asset in assets}
@@ -109,9 +108,17 @@ def compile_timeline(
         speed: float,
         volume_db: float,
         reason: str,
+        replaced_asset_id: str | None = None,
     ) -> None:
         nonlocal cursor
         kind = "video" if asset["kind"] == "video" else "image"
+        metadata = {
+            "reason": reason,
+            "unit_id": asset.get("unit_id"),
+            "shot_index": index,
+        }
+        if replaced_asset_id:
+            metadata["replaces_asset_id"] = replaced_asset_id
         clip = {
             "id": f"clip-{uuid.uuid4().hex[:12]}",
             "asset_id": asset["id"],
@@ -122,11 +129,7 @@ def compile_timeline(
             "source_in": source_in,
             "speed": speed,
             "volume_db": volume_db,
-            "metadata": {
-                "reason": reason,
-                "unit_id": asset.get("unit_id"),
-                "shot_index": index,
-            },
+            "metadata": metadata,
         }
         tracks[kind].append(clip)
         if (
@@ -139,7 +142,12 @@ def compile_timeline(
         cursor += duration + hold
 
     for index, decision in enumerate(decisions):
-        asset = asset_map.get(decision.get("asset_id") or "")
+        source_asset_id = str(decision.get("asset_id") or "")
+        resolved_asset_id = replacements.get(
+            source_asset_id,
+            source_asset_id,
+        )
+        asset = asset_map.get(resolved_asset_id)
         if not asset or asset["kind"] not in ("video", "image"):
             continue
         duration = _clip_duration(asset, decision, 1.0)
@@ -155,6 +163,11 @@ def compile_timeline(
                 or 0.0
             ),
             decision.get("reason", ""),
+            (
+                source_asset_id
+                if source_asset_id != resolved_asset_id
+                else None
+            ),
         )
 
     if not decisions:

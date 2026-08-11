@@ -1,3 +1,6 @@
+from dataclasses import replace
+import hashlib
+import json
 from typing import Any
 
 from fastapi import APIRouter, Request
@@ -8,6 +11,7 @@ from app.api.logging import current_request_id
 from app.application.commands import (
     CompileTimelineCommand,
     CreateJobCommand,
+    RepairTimelineAssetsCommand,
     get_command_bus,
 )
 from app.application.job_engine import get_job_engine
@@ -22,6 +26,14 @@ class CompileRequest(BaseModel):
         max_length=500,
     )
     parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+class RepairTimelineAssetsRequest(BaseModel):
+    expected_current_version_id: str
+    replacements: dict[str, str] = Field(
+        min_length=1,
+        max_length=500,
+    )
 
 
 class RenderRequest(BaseModel):
@@ -43,6 +55,41 @@ def compile_route(
             input_version_ids=data.input_version_ids,
         ),
         command_context(request),
+    ).result
+
+
+@router.post("/api/artifacts/{artifact_id}/repair-assets")
+def repair_timeline_assets(
+    artifact_id: str,
+    data: RepairTimelineAssetsRequest,
+    request: Request,
+):
+    command = RepairTimelineAssetsCommand(
+        artifact_id=artifact_id,
+        replacements=data.replacements,
+        expected_current_version_id=(
+            data.expected_current_version_id
+        ),
+    )
+    context = command_context(request)
+    if not context.idempotency_key:
+        encoded = json.dumps(
+            data.replacements,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        digest = hashlib.sha256(encoded).hexdigest()[:16]
+        context = replace(
+            context,
+            idempotency_key=(
+                f"timeline-repair:{artifact_id}:"
+                f"{data.expected_current_version_id}:{digest}"
+            ),
+        )
+    return get_command_bus(request.app).execute(
+        command,
+        context,
     ).result
 
 

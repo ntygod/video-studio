@@ -12,6 +12,7 @@ from .projects import CreateProjectCommand, CreateUnitsCommand, PatchProjectComm
 from .proposals import AcceptProposalCommand, CreateArtifactChangeProposalCommand, CreateStructureProposalCommand, RejectProposalCommand
 from .recovery import recover_interrupted_operations
 from .timeline import CompileTimelineCommand
+from .timeline_repair import RepairTimelineAssetsCommand
 
 __all__ = [
     "AcceptProposalCommand", "AddArtifactVersionCommand", "CommandBus", "CommandContext",
@@ -23,7 +24,8 @@ __all__ = [
     "MAX_UPLOAD_BYTES", "OperationExecution", "PatchAssetScopeCommand",
     "PatchProjectCommand", "PatchUnitCommand", "PersistGeneratedArtifactCommand",
     "PersistGeneratedAssetCommand", "PersistGeneratedFileAssetCommand",
-    "RegisterArtifactDerivationCommand", "RejectProposalCommand", "RevertOperationCommand",
+    "RegisterArtifactDerivationCommand", "RejectProposalCommand",
+    "RepairTimelineAssetsCommand", "RevertOperationCommand",
     "SetArtifactVersionStatusCommand", "generated_artifact_attempt", "get_command_bus",
     "job_asset_persistence_attempt", "recover_interrupted_operations",
 ]
