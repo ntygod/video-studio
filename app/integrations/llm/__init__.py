@@ -30,10 +30,11 @@ def _pick_llm_model(provider: dict[str, Any]) -> str:
 def build_adapter(provider: dict[str, Any], model_id: str | None = None) -> LLMAdapter:
     """按 provider.adapter 选择适配器。
 
-    只有 OpenAI 兼容协议走原生 tool calling，其余一律回落到 JSON 协议模拟。
+    只有显式声明为 OpenAI 兼容协议的渠道才走原生 tool calling；空值和其他
+    adapter 一律回落到 JSON 协议模拟，避免未知渠道被误当成 OpenAI。
     """
     model_id = model_id or _pick_llm_model(provider)
-    adapter = str(provider.get("adapter") or "openai").lower()
+    adapter = str(provider.get("adapter") or "").strip().lower()
     if adapter == "openai":
         return OpenAIAdapter(provider, model_id=model_id)
     return JsonProtocolAdapter(provider, model_id=model_id)

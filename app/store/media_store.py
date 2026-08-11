@@ -103,7 +103,7 @@ class MediaStore:
                     "-i",
                     str(source),
                     "-vf",
-                    "scale='min(640,iw)':-2",
+                    "scale='min(640,iw)':-1",
                     "-frames:v",
                     "1",
                     str(target),

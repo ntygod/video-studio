@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import queue
 import threading
+import weakref
 from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -172,6 +173,33 @@ class AgentTurnExecutor:
 _executor_lock = threading.Lock()
 
 
+def _register_shutdown(app, callback: Callable[[], None]) -> None:
+    """兼容新旧 FastAPI/Starlette 的生命周期注册 API。
+
+    新版 FastAPI 已移除 ``FastAPI.add_event_handler``，但部分旧版本仍只暴露
+    该入口。优先使用 Router API；如果运行时不提供事件注册能力，则至少通过
+    weakref finalizer 在 app 被回收时关闭 daemon worker。
+    """
+
+    router = getattr(app, "router", None)
+    for owner in (router, app):
+        add_handler = getattr(owner, "add_event_handler", None)
+        if not callable(add_handler):
+            continue
+        try:
+            add_handler("shutdown", callback)
+            return
+        except (AttributeError, RuntimeError):
+            continue
+
+    shutdown_handlers = getattr(router, "on_shutdown", None)
+    if hasattr(shutdown_handlers, "append"):
+        shutdown_handlers.append(callback)
+        return
+
+    weakref.finalize(app, callback)
+
+
 def get_agent_turn_executor(app, job_engine) -> AgentTurnExecutor:
     """每个 FastAPI app 只创建一个执行池，测试 app 之间互不共享。"""
 
@@ -188,5 +216,5 @@ def get_agent_turn_executor(app, job_engine) -> AgentTurnExecutor:
                 job_engine,
             )
             app.state.agent_turn_executor = executor
-            app.add_event_handler("shutdown", executor.shutdown)
+            _register_shutdown(app, executor.shutdown)
     return executor
