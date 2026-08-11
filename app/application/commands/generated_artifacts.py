@@ -5,31 +5,30 @@ from __future__ import annotations
 import hashlib
 import json
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy import select
 
 from app.store import UnitOfWork
 from app.store.operation_models import OperationLogRow
-from app.store.repositories import NotFoundError
+from app.store.repositories import ConflictError, NotFoundError
 
 from .base import CommandValidationError, OperationExecution
 
 SINGLETON_GENERATED_KINDS = frozenset({"edit_plan", "timeline"})
 
 
-def _payload_fingerprint(payload: dict[str, Any]) -> dict[str, Any]:
+def _fingerprint(value: Any, prefix: str) -> dict[str, Any]:
     encoded = json.dumps(
-        payload,
+        value,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
     return {
-        "payload_sha256": hashlib.sha256(encoded).hexdigest(),
-        "payload_bytes": len(encoded),
-        "payload_keys": sorted(payload),
+        f"{prefix}_sha256": hashlib.sha256(encoded).hexdigest(),
+        f"{prefix}_bytes": len(encoded),
     }
 
 
@@ -71,14 +70,6 @@ def generated_artifact_attempt(
     database,
     job_id: str,
 ) -> tuple[dict[str, Any] | None, str]:
-    """Return an already persisted output or the next attempt key.
-
-    A Job may crash after its Artifact transaction commits but before the Job
-    result is updated. Any succeeded persistence operation is authoritative and
-    is replayed before another model call. Failed operations remain auditable
-    and receive a new numbered key on the next retry.
-    """
-
     with UnitOfWork(database) as uow:
         rows = uow.session.scalars(
             select(OperationLogRow)
@@ -122,6 +113,17 @@ class PersistGeneratedArtifactCommand:
     name: str = "AI 生成"
     schema_id: str = "freeform"
     source: str = "job"
+    input_version_ids: list[str] = field(default_factory=list)
+    dependency_type: str = "generated_from"
+    dependency_metadata: dict[str, Any] = field(
+        default_factory=dict
+    )
+    provenance: dict[str, Any] = field(default_factory=dict)
+    _operation_id: str | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
 
     operation_type = "artifact.generated.persist"
     risk_level = "low"
@@ -136,6 +138,9 @@ class PersistGeneratedArtifactCommand:
         unit = self.unit_id or "project"
         return f"project:{self.project_id}:{unit}:{self.kind}"
 
+    def bind_operation_id(self, operation_id: str) -> None:
+        self._operation_id = operation_id
+
     def arguments(self) -> dict[str, Any]:
         return {
             "unit_id": self.unit_id,
@@ -143,7 +148,14 @@ class PersistGeneratedArtifactCommand:
             "name": self.name,
             "schema_id": self.schema_id,
             "source": self.source,
-            **_payload_fingerprint(self.payload),
+            "input_version_ids": list(self.input_version_ids),
+            "dependency_type": self.dependency_type,
+            **_fingerprint(self.payload, "payload"),
+            **_fingerprint(
+                self.dependency_metadata,
+                "dependency_metadata",
+            ),
+            **_fingerprint(self.provenance, "provenance"),
         }
 
     def preconditions(self) -> list[dict[str, Any]]:
@@ -155,6 +167,14 @@ class PersistGeneratedArtifactCommand:
                 {
                     "type": "unit_belongs_to_project",
                     "unit_id": self.unit_id,
+                    "project_id": self.project_id,
+                }
+            )
+        if self.input_version_ids:
+            conditions.append(
+                {
+                    "type": "artifact_versions_belong_to_project",
+                    "version_ids": list(self.input_version_ids),
                     "project_id": self.project_id,
                 }
             )
@@ -174,8 +194,19 @@ class PersistGeneratedArtifactCommand:
             unit = uow.units.get(self.unit_id)
             if unit.project_id != self.project_id:
                 raise NotFoundError(self.unit_id)
+        for version_id in self.input_version_ids:
+            version = uow.artifacts.get_version(version_id)
+            artifact = uow.artifacts.get(version["artifact_id"])
+            if artifact["project_id"] != self.project_id:
+                raise ConflictError(
+                    "generated Artifact input belongs to another project"
+                )
 
     def execute(self, uow: UnitOfWork) -> OperationExecution:
+        if not self._operation_id:
+            raise RuntimeError(
+                "generated Artifact command is not bound to an operation"
+            )
         artifact = None
         if self.kind in SINGLETON_GENERATED_KINDS:
             artifact = uow.artifacts.find_latest(
@@ -216,6 +247,16 @@ class PersistGeneratedArtifactCommand:
                 "created_version_id": version["id"],
             }
 
+        uow.artifact_graph.register_derivation(
+            str(version["id"]),
+            self.input_version_ids,
+            dependency_type=self.dependency_type,
+            metadata=deepcopy(self.dependency_metadata),
+            provenance={
+                **deepcopy(self.provenance),
+                "operation_id": self._operation_id,
+            },
+        )
         snapshot = _artifact_snapshot(saved)
         return OperationExecution(
             result=saved,

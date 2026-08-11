@@ -17,6 +17,10 @@ router = APIRouter(tags=["timeline"])
 
 class CompileRequest(BaseModel):
     unit_id: str | None = None
+    input_version_ids: list[str] = Field(
+        default_factory=list,
+        max_length=500,
+    )
     parameters: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -36,6 +40,7 @@ def compile_route(
             project_id=project_id,
             unit_id=data.unit_id,
             parameters=data.parameters,
+            input_version_ids=data.input_version_ids,
         ),
         command_context(request),
     ).result

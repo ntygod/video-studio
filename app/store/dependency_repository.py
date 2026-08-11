@@ -86,6 +86,31 @@ class ArtifactGraphRepository:
             raise NotFoundError(version_id)
         return row
 
+    @staticmethod
+    def _normalized_provenance(
+        provenance: dict[str, Any] | None,
+    ) -> dict[str, Any]:
+        data = deepcopy(provenance or {})
+        return {
+            "provider_profile_id": str(
+                data.get("provider_profile_id") or ""
+            ),
+            "model_id": str(data.get("model_id") or ""),
+            "prompt_version": str(
+                data.get("prompt_version") or ""
+            ),
+            "parameters": deepcopy(
+                data.get("parameters") or {}
+            ),
+            "seed": str(data.get("seed") or ""),
+            "task_attempt_id": str(
+                data.get("task_attempt_id") or ""
+            ),
+            "operation_id": str(
+                data.get("operation_id") or ""
+            ),
+        }
+
     def _set_freshness(
         self,
         artifact: ArtifactRow,
@@ -214,14 +239,28 @@ class ArtifactGraphRepository:
         metadata: dict[str, Any] | None = None,
         provenance: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        """Persist exact inputs and provenance for one immutable output version.
+
+        Provenance may be recorded with zero Artifact inputs, for example when
+        a timeline is compiled only from media Assets. Dependency edges are
+        created only for actual input Artifact versions; the system never
+        invents an upstream version merely to satisfy the schema.
+        """
+
         output = self._version(output_version_id)
         output_artifact = self._artifact(output.artifact_id)
-        inputs = list(dict.fromkeys(str(item) for item in input_version_ids))
-        if not inputs:
-            raise ValueError("derivation requires at least one input version")
+        inputs = list(
+            dict.fromkeys(
+                str(item)
+                for item in input_version_ids
+                if str(item)
+            )
+        )
         if output_version_id in inputs:
             raise ConflictError("artifact version cannot depend on itself")
-        input_rows = [self._version(version_id) for version_id in inputs]
+        input_rows = [
+            self._version(version_id) for version_id in inputs
+        ]
         input_artifacts = [
             self._artifact(row.artifact_id) for row in input_rows
         ]
@@ -245,6 +284,9 @@ class ArtifactGraphRepository:
                 == output_version_id
             )
         )
+        normalized_provenance = self._normalized_provenance(
+            provenance
+        )
         if existing or existing_provenance:
             existing_inputs = sorted(
                 row.upstream_version_id for row in existing
@@ -253,6 +295,16 @@ class ArtifactGraphRepository:
                 raise ConflictError(
                     "artifact version already has different inputs"
                 )
+            if existing_provenance is not None:
+                current = self._provenance(existing_provenance)
+                comparable = {
+                    key: current[key]
+                    for key in normalized_provenance
+                }
+                if comparable != normalized_provenance:
+                    raise ConflictError(
+                        "artifact version already has different provenance"
+                    )
             return self.derivation(output_version_id)
 
         now = time.time()
@@ -271,30 +323,29 @@ class ArtifactGraphRepository:
                     created_at=now,
                 )
             )
-        provenance_data = deepcopy(provenance or {})
         self.session.add(
             ArtifactProvenanceRow(
                 id=new_id(),
                 project_id=output_artifact.project_id,
                 artifact_version_id=output_version_id,
                 input_version_ids_json=dumps(inputs),
-                provider_profile_id=str(
-                    provenance_data.get("provider_profile_id") or ""
-                ),
-                model_id=str(provenance_data.get("model_id") or ""),
-                prompt_version=str(
-                    provenance_data.get("prompt_version") or ""
-                ),
+                provider_profile_id=normalized_provenance[
+                    "provider_profile_id"
+                ],
+                model_id=normalized_provenance["model_id"],
+                prompt_version=normalized_provenance[
+                    "prompt_version"
+                ],
                 parameters_json=dumps(
-                    provenance_data.get("parameters") or {}
+                    normalized_provenance["parameters"]
                 ),
-                seed=str(provenance_data.get("seed") or ""),
-                task_attempt_id=str(
-                    provenance_data.get("task_attempt_id") or ""
-                ),
-                operation_id=str(
-                    provenance_data.get("operation_id") or ""
-                ),
+                seed=normalized_provenance["seed"],
+                task_attempt_id=normalized_provenance[
+                    "task_attempt_id"
+                ],
+                operation_id=normalized_provenance[
+                    "operation_id"
+                ],
                 created_at=now,
             )
         )
@@ -332,7 +383,9 @@ class ArtifactGraphRepository:
                 self._set_freshness(
                     output_artifact,
                     "stale",
-                    reason="derivation uses non-current or stale inputs",
+                    reason=(
+                        "derivation uses non-current or stale inputs"
+                    ),
                     stale_from_version_ids=stale_sources,
                 )
             else:
@@ -414,8 +467,13 @@ class ArtifactGraphRepository:
                 )
             ).all()
             for edge in edges:
-                downstream = self._artifact(edge.downstream_artifact_id)
-                if downstream.current_version_id != edge.downstream_version_id:
+                downstream = self._artifact(
+                    edge.downstream_artifact_id
+                )
+                if (
+                    downstream.current_version_id
+                    != edge.downstream_version_id
+                ):
                     continue
                 if downstream.id in visited:
                     continue

@@ -1,6 +1,7 @@
-"""LLM Job handler with durable, idempotent Artifact persistence."""
+"""LLM Job handler with durable Artifact provenance."""
 
 import json
+from typing import Any
 
 from app.application.commands import (
     CommandBus,
@@ -25,6 +26,22 @@ def _provider(uow, capability: str):
                 include_secret=True,
             )
     raise RuntimeError(f"没有启用的 {capability} 渠道")
+
+
+def _model_id(provider: dict[str, Any]) -> str:
+    models = provider.get("models") or []
+    for model in models:
+        if model.get("is_default"):
+            return str(model.get("model_id") or "")
+    for model in models:
+        capability = str(
+            model.get("capability_type")
+            or provider.get("capability_type")
+            or ""
+        ).lower()
+        if capability in {"llm", "text", "chat"}:
+            return str(model.get("model_id") or "")
+    return str((models[0] if models else {}).get("model_id") or "")
 
 
 def _complete_persistence(
@@ -67,10 +84,12 @@ def run(ctx: JobContext) -> None:
         payload.get("artifact_name") or "AI 生成"
     )
     context = payload.get("context") or {}
+    parameters = payload.get("parameters") or {}
+    input_version_ids = [
+        str(version_id)
+        for version_id in payload.get("input_version_ids") or []
+    ]
 
-    # The Artifact transaction may have committed before a process died while
-    # updating the Job result. Reuse it before making another non-deterministic
-    # model call.
     existing, idempotency_key = generated_artifact_attempt(
         ctx.database,
         ctx.job["id"],
@@ -104,6 +123,23 @@ def run(ctx: JobContext) -> None:
             schema_id=schema_id,
             payload=response,
             source="job",
+            input_version_ids=input_version_ids,
+            dependency_type="generated_from",
+            dependency_metadata={
+                "job_id": ctx.job["id"],
+            },
+            provenance={
+                "provider_profile_id": provider["id"],
+                "model_id": _model_id(provider),
+                "prompt_version": str(
+                    payload.get("prompt_version") or "inline@1"
+                ),
+                "parameters": parameters,
+                "seed": str(parameters.get("seed") or ""),
+                "task_attempt_id": (
+                    f"job:{ctx.job['id']}:attempt:{job.get('attempt', 0)}"
+                ),
+            },
         ),
         CommandContext(
             actor_type="job",

@@ -20,9 +20,14 @@ class GenerateRequest(BaseModel):
     unit_id: str | None = None
     capability: str = "llm"
     prompt: str = ""
+    prompt_version: str = "inline@1"
     schema_id: str = "freeform"
     artifact_kind: str = "generated"
     artifact_name: str = "AI 生成"
+    input_version_ids: list[str] = Field(
+        default_factory=list,
+        max_length=500,
+    )
     context: dict[str, Any] = Field(default_factory=dict)
     parameters: dict[str, Any] = Field(default_factory=dict)
 

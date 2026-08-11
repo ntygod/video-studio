@@ -33,6 +33,11 @@ class RegisterArtifactDerivationCommand:
     metadata: dict[str, Any] = field(default_factory=dict)
     provenance: dict[str, Any] = field(default_factory=dict)
     project_id: str | None = None
+    _operation_id: str | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
 
     operation_type = "artifact.derivation.register"
     risk_level = "low"
@@ -45,6 +50,9 @@ class RegisterArtifactDerivationCommand:
     @property
     def idempotency_scope(self) -> str:
         return f"artifact-version:{self.output_version_id}:derivation"
+
+    def bind_operation_id(self, operation_id: str) -> None:
+        self._operation_id = operation_id
 
     def arguments(self) -> dict[str, Any]:
         return {
@@ -85,7 +93,10 @@ class RegisterArtifactDerivationCommand:
             self.input_version_ids,
             dependency_type=self.dependency_type,
             metadata=self.metadata,
-            provenance=self.provenance,
+            provenance={
+                **self.provenance,
+                "operation_id": self._operation_id or "",
+            },
         )
         return OperationExecution(
             result=result,
