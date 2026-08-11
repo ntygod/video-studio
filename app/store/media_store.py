@@ -1,4 +1,4 @@
-"""媒体存储：相对 URI、ffprobe 探测、缩略图与音频波形。"""
+"""媒体存储：相对 URI、媒体探测、缩略图与音频波形。"""
 
 import hashlib
 import json
@@ -50,9 +50,89 @@ class MediaStore:
         relative = f"{project_id}/{unit_id}/" if unit_id else f"{project_id}/"
         return relative + name, hashlib.sha256(data).hexdigest()
 
+    @staticmethod
+    def _probe_image_header(path: Path) -> dict | None:
+        """从常见图片文件头读取尺寸，避免小图片依赖 ffprobe。
+
+        PNG/GIF 的尺寸位于固定偏移；JPEG 需要扫描到任一 SOF 段。该路径只解析
+        元数据，不解码像素，因此对于生成任务中的 1x1 图片也稳定且成本很低。
+        """
+
+        with path.open("rb") as stream:
+            header = stream.read(32)
+            if (
+                len(header) >= 24
+                and header[:8] == b"\x89PNG\r\n\x1a\n"
+                and header[12:16] == b"IHDR"
+            ):
+                return {
+                    "width": int.from_bytes(header[16:20], "big"),
+                    "height": int.from_bytes(header[20:24], "big"),
+                    "codec": "png",
+                }
+            if len(header) >= 10 and header[:6] in (b"GIF87a", b"GIF89a"):
+                return {
+                    "width": int.from_bytes(header[6:8], "little"),
+                    "height": int.from_bytes(header[8:10], "little"),
+                    "codec": "gif",
+                }
+            if header[:2] != b"\xff\xd8":
+                return None
+
+            stream.seek(2)
+            sof_markers = {
+                0xC0,
+                0xC1,
+                0xC2,
+                0xC3,
+                0xC5,
+                0xC6,
+                0xC7,
+                0xC9,
+                0xCA,
+                0xCB,
+                0xCD,
+                0xCE,
+                0xCF,
+            }
+            while True:
+                prefix = stream.read(1)
+                if not prefix:
+                    return None
+                if prefix != b"\xff":
+                    continue
+                marker_bytes = stream.read(1)
+                while marker_bytes == b"\xff":
+                    marker_bytes = stream.read(1)
+                if not marker_bytes:
+                    return None
+                marker = marker_bytes[0]
+                if marker in (0xD8, 0xD9) or 0xD0 <= marker <= 0xD7:
+                    continue
+                length_bytes = stream.read(2)
+                if len(length_bytes) != 2:
+                    return None
+                segment_length = int.from_bytes(length_bytes, "big")
+                if segment_length < 2:
+                    return None
+                if marker in sof_markers:
+                    payload = stream.read(5)
+                    if len(payload) != 5:
+                        return None
+                    return {
+                        "width": int.from_bytes(payload[3:5], "big"),
+                        "height": int.from_bytes(payload[1:3], "big"),
+                        "codec": "jpeg",
+                    }
+                stream.seek(segment_length - 2, 1)
+
     def probe(self, relative_uri: str) -> dict:
-        """ffprobe 探测 width/height/duration/codec。"""
+        """探测 width/height/duration/codec；图片优先走文件头，其余使用 ffprobe。"""
         path = self.path_for(relative_uri)
+        image_meta = self._probe_image_header(path)
+        if image_meta is not None:
+            return image_meta
+
         command = [
             self.ffprobe_path,
             "-v",
