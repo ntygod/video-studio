@@ -27,14 +27,26 @@ def test_fresh_database_runs_all_migrations(tmp_path):
         assert {
             "projects", "creative_units", "artifacts",
             "artifact_versions", "jobs", "operation_logs",
-            "artifact_dependencies", "artifact_provenance",
-            "artifact_freshness", "alembic_version",
+            "artifact_dependencies", "asset_dependencies",
+            "artifact_provenance", "artifact_freshness",
+            "alembic_version",
         } <= tables
         operation_columns = {
             item["name"]
             for item in inspect(database.engine).get_columns("operation_logs")
         }
         assert {"reverted_by_operation_id", "reverted_at"} <= operation_columns
+        asset_dependency_columns = {
+            item["name"]
+            for item in inspect(database.engine).get_columns(
+                "asset_dependencies"
+            )
+        }
+        assert {
+            "upstream_asset_id",
+            "upstream_asset_snapshot_json",
+            "downstream_version_id",
+        } <= asset_dependency_columns
     finally:
         database.engine.dispose()
 
@@ -46,6 +58,7 @@ def test_pre_alembic_database_is_stamped_then_upgraded(tmp_path):
     Base.metadata.create_all(legacy_engine)
     with legacy_engine.begin() as connection:
         for table in (
+            "asset_dependencies",
             "artifact_freshness",
             "artifact_provenance",
             "artifact_dependencies",
@@ -85,7 +98,8 @@ def test_pre_alembic_database_is_stamped_then_upgraded(tmp_path):
         tables = set(inspect(database.engine).get_table_names())
         assert {
             "operation_logs", "artifact_dependencies",
-            "artifact_provenance", "artifact_freshness",
+            "asset_dependencies", "artifact_provenance",
+            "artifact_freshness",
         } <= tables
         with database.engine.connect() as connection:
             title = connection.execute(

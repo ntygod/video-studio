@@ -63,6 +63,69 @@ class ArtifactDependencyRow(Base):
     created_at: Mapped[float] = mapped_column(Float, nullable=False)
 
 
+class AssetDependencyRow(Base):
+    """Immutable Asset input used by one ArtifactVersion.
+
+    ``upstream_asset_id`` intentionally has no foreign key. Asset deletion is
+    a supported operation and the dependency must survive as a tombstone so
+    the current downstream Artifact can explain which exact input is missing.
+    The project and downstream references still cascade normally.
+    """
+
+    __tablename__ = "asset_dependencies"
+    __table_args__ = (
+        UniqueConstraint(
+            "upstream_asset_id",
+            "downstream_version_id",
+            "dependency_type",
+            name="uq_asset_dependency_edge",
+        ),
+        Index(
+            "ix_asset_dependency_project_downstream",
+            "project_id",
+            "downstream_artifact_id",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    upstream_asset_id: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        index=True,
+    )
+    upstream_asset_snapshot_json: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="{}",
+    )
+    downstream_artifact_id: Mapped[str] = mapped_column(
+        ForeignKey("artifacts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    downstream_version_id: Mapped[str] = mapped_column(
+        ForeignKey("artifact_versions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    dependency_type: Mapped[str] = mapped_column(
+        String(80),
+        nullable=False,
+        default="uses_asset",
+    )
+    metadata_json: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="{}",
+    )
+    created_at: Mapped[float] = mapped_column(Float, nullable=False)
+
+
 class ArtifactProvenanceRow(Base):
     __tablename__ = "artifact_provenance"
     __table_args__ = (

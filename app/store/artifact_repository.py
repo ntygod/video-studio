@@ -7,9 +7,11 @@ from typing import Any
 
 from app.domain.artifact_registry import artifact_definitions
 
-from .dependency_repository import ArtifactGraphRepository
 from .models import ArtifactRow, ArtifactVersionRow
 from .repositories import ArtifactRepository, NotFoundError, new_id
+from .semantic_graph_repository import (
+    SemanticArtifactGraphRepository,
+)
 
 
 class SchemaAwareArtifactRepository(ArtifactRepository):
@@ -93,7 +95,9 @@ class SchemaAwareArtifactRepository(ArtifactRepository):
             )
         row.schema_version = validated.schema_version
         self.session.flush()
-        ArtifactGraphRepository(self.session).on_new_version(
+        SemanticArtifactGraphRepository(
+            self.session
+        ).on_new_version(
             artifact_id,
             row.id,
         )
