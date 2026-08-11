@@ -2,7 +2,7 @@ from dataclasses import replace
 from typing import Any
 
 from fastapi import APIRouter, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from app.api.command_context import command_context
 from app.api.logging import current_request_id
@@ -25,12 +25,25 @@ router = APIRouter(tags=["artifact-dependencies"])
 
 class DerivationCreate(BaseModel):
     input_version_ids: list[str] = Field(
-        min_length=1,
+        default_factory=list,
+        max_length=500,
+    )
+    input_asset_ids: list[str] = Field(
+        default_factory=list,
         max_length=500,
     )
     dependency_type: str = "derived_from"
+    asset_dependency_type: str = "uses_asset"
     metadata: dict[str, Any] = Field(default_factory=dict)
     provenance: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def require_inputs(self):
+        if not self.input_version_ids and not self.input_asset_ids:
+            raise ValueError(
+                "derivation requires ArtifactVersion or Asset inputs"
+            )
+        return self
 
 
 @router.post(
@@ -46,7 +59,9 @@ def register_derivation(
         RegisterArtifactDerivationCommand(
             output_version_id=version_id,
             input_version_ids=data.input_version_ids,
+            input_asset_ids=data.input_asset_ids,
             dependency_type=data.dependency_type,
+            asset_dependency_type=data.asset_dependency_type,
             metadata=data.metadata,
             provenance=data.provenance,
         ),
@@ -120,6 +135,11 @@ def get_provenance(version_id: str, request: Request):
             "provenance": uow.artifact_graph.provenance(
                 version_id
             ),
+            "asset_dependencies": (
+                uow.artifact_graph.asset_dependencies_for_version(
+                    version_id
+                )
+            ),
         }
 
 
@@ -135,6 +155,25 @@ def get_dependencies(artifact_id: str, request: Request):
         return uow.artifact_graph.dependencies_for_artifact(
             artifact_id
         )
+
+
+@router.get(
+    "/api/artifacts/{artifact_id}/asset-dependencies"
+)
+def get_asset_dependencies(
+    artifact_id: str,
+    request: Request,
+):
+    with UnitOfWork(request.app.state.database) as uow:
+        return uow.artifact_graph.asset_dependencies_for_artifact(
+            artifact_id
+        )
+
+
+@router.get("/api/assets/{asset_id}/dependents")
+def get_asset_dependents(asset_id: str, request: Request):
+    with UnitOfWork(request.app.state.database) as uow:
+        return uow.artifact_graph.dependents_for_asset(asset_id)
 
 
 @router.get("/api/artifacts/{artifact_id}/impact")

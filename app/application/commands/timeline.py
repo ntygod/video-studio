@@ -202,16 +202,17 @@ class CompileTimelineCommand:
             )
         )
         asset_ids = _timeline_asset_ids(timeline)
+        metadata = {
+            "asset_ids": asset_ids,
+            "edit_plan_artifact_id": (
+                edit_plan.get("id") if edit_plan else None
+            ),
+        }
         uow.artifact_graph.register_derivation(
             str(version["id"]),
             inputs,
             dependency_type="compiled_from",
-            metadata={
-                "asset_ids": asset_ids,
-                "edit_plan_artifact_id": (
-                    edit_plan.get("id") if edit_plan else None
-                ),
-            },
+            metadata=metadata,
             provenance={
                 "prompt_version": "timeline-compiler@1",
                 "parameters": {
@@ -219,6 +220,17 @@ class CompileTimelineCommand:
                     "asset_ids": asset_ids,
                 },
                 "operation_id": self._operation_id,
+            },
+        )
+        uow.artifact_graph.register_asset_dependencies(
+            str(version["id"]),
+            asset_ids,
+            dependency_type="timeline_clip",
+            metadata={
+                "role": "timeline_clip",
+                "edit_plan_artifact_id": (
+                    edit_plan.get("id") if edit_plan else None
+                ),
             },
         )
 
