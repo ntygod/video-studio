@@ -32,20 +32,21 @@ class Database:
 
     def create_schema(self) -> None:
         from . import models  # noqa: F401
+        from .migrations import upgrade_database
 
-        Base.metadata.create_all(self.engine)
+        upgrade_database(self.engine)
         if str(self.engine.url).startswith("sqlite"):
             self._ensure_model_default_column()
             self._create_fts()
 
     def _ensure_model_default_column(self) -> None:
-        """旧库补 is_default 列（SQLite 不支持 CREATE OR ALTER，按 PRAGMA 探测）。"""
+        """旧库补 is_default 列；Alembic baseline 之前的兼容入口。"""
         with self.engine.begin() as conn:
             columns = {
                 row[1]
                 for row in conn.execute(text("PRAGMA table_info(model_profiles)"))
             }
-            if "is_default" not in columns:
+            if columns and "is_default" not in columns:
                 conn.execute(
                     text(
                         "ALTER TABLE model_profiles "
@@ -54,7 +55,7 @@ class Database:
                 )
 
     def _create_fts(self) -> None:
-        """FTS5 虚拟表 + 同步触发器（T3.2）。trigram 分词器面向中文。"""
+        """FTS5 虚拟表 + 同步触发器。trigram 分词器面向中文。"""
         with self.engine.begin() as conn:
             conn.execute(
                 text(
