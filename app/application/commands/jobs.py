@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import json
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.application.explicit_inputs import (
+    resolve_explicit_job_inputs,
+)
 from app.store import UnitOfWork
 from app.store.repositories import NotFoundError
 
@@ -14,12 +18,7 @@ from .base import CommandValidationError, OperationExecution
 
 
 def _semantic_value(value: Any) -> Any:
-    """Remove transport/runtime metadata before computing idempotency.
-
-    Keys prefixed with ``_`` carry request IDs and other execution tracing. They
-    remain in the persisted Job payload, but a retried HTTP request naturally
-    receives a new request ID and must still replay the same logical command.
-    """
+    """Remove tracing-only metadata from idempotency fingerprints."""
 
     if isinstance(value, dict):
         return {
@@ -28,8 +27,6 @@ def _semantic_value(value: Any) -> Any:
             if not str(key).startswith("_")
         }
     if isinstance(value, list):
-        return [_semantic_value(item) for item in value]
-    if isinstance(value, tuple):
         return [_semantic_value(item) for item in value]
     return value
 
@@ -108,12 +105,27 @@ class CreateJobCommand:
                 raise NotFoundError(self.parent_job_id)
 
     def execute(self, uow: UnitOfWork) -> OperationExecution:
+        payload = deepcopy(self.payload)
+        if self.turn_id and self.job_type == "generate":
+            input_version_ids, input_asset_ids = (
+                resolve_explicit_job_inputs(
+                    uow,
+                    self.project_id,
+                    self.turn_id,
+                    payload,
+                )
+            )
+            if input_version_ids:
+                payload["input_version_ids"] = input_version_ids
+            if input_asset_ids:
+                payload["input_asset_ids"] = input_asset_ids
+
         job = uow.jobs.create(
             {
                 "project_id": self.project_id,
                 "unit_id": self.unit_id,
                 "job_type": self.job_type,
-                "payload": self.payload,
+                "payload": payload,
                 "max_attempts": self.max_attempts,
                 "parent_job_id": self.parent_job_id,
                 "turn_id": self.turn_id,
