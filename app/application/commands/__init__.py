@@ -19,6 +19,7 @@ from .base import (
     get_command_bus,
 )
 from .deletions import DeleteProjectCommand
+from .generated_assets import PersistGeneratedAssetCommand
 from .inverse import RevertOperationCommand
 from .jobs import CreateJobCommand
 from .projects import (
@@ -59,6 +60,7 @@ __all__ = [
     "PatchAssetScopeCommand",
     "PatchProjectCommand",
     "PatchUnitCommand",
+    "PersistGeneratedAssetCommand",
     "RejectProposalCommand",
     "RevertOperationCommand",
     "SetArtifactVersionStatusCommand",
