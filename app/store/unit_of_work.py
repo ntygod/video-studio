@@ -1,4 +1,5 @@
 from .artifact_repository import SchemaAwareArtifactRepository
+from .operation_repository import OperationLogRepository
 from .repositories import (
     AgentTurnRepository,
     AssetRepository,
@@ -28,6 +29,7 @@ class UnitOfWork:
         self.assets = AssetRepository(self.session)
         self.jobs = JobRepository(self.session)
         self.agent_turns = AgentTurnRepository(self.session)
+        self.operations = OperationLogRepository(self.session)
         self.search = SearchRepository(self.session)
         return self
 

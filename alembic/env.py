@@ -12,6 +12,7 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from app.store import models  # noqa: E402,F401
+from app.store import operation_models  # noqa: E402,F401
 from app.store.database import Base  # noqa: E402
 
 config = context.config

@@ -1,4 +1,4 @@
-"""Adopt the current ORM schema as the Alembic baseline."""
+"""Adopt the original ORM schema as the Alembic baseline."""
 
 from alembic import op
 
@@ -10,9 +10,31 @@ down_revision = None
 branch_labels = None
 depends_on = None
 
+BASELINE_TABLES = frozenset(
+    {
+        "projects",
+        "creative_units",
+        "conversations",
+        "messages",
+        "artifacts",
+        "artifact_versions",
+        "change_proposals",
+        "provider_profiles",
+        "model_profiles",
+        "assets",
+        "jobs",
+        "job_events",
+        "agent_turns",
+        "agent_steps",
+    }
+)
+
 
 def upgrade() -> None:
-    Base.metadata.create_all(bind=op.get_bind())
+    bind = op.get_bind()
+    for table in Base.metadata.sorted_tables:
+        if table.name in BASELINE_TABLES:
+            table.create(bind=bind, checkfirst=True)
 
 
 def downgrade() -> None:
@@ -30,4 +52,6 @@ def downgrade() -> None:
             op.execute(f"DROP TRIGGER IF EXISTS {trigger}")
         op.execute("DROP TABLE IF EXISTS units_fts")
         op.execute("DROP TABLE IF EXISTS artifacts_fts")
-    Base.metadata.drop_all(bind=bind)
+    for table in reversed(Base.metadata.sorted_tables):
+        if table.name in BASELINE_TABLES:
+            table.drop(bind=bind, checkfirst=True)
