@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.api.logging import request_id_var
-from app.application.agent.loop import run_turn
+from app.application.agent.executor import AgentQueueFull, get_agent_turn_executor
 from app.application.agent.revert import revert_agent_turn
 from app.application.job_engine import get_job_engine
 from app.store import UnitOfWork
@@ -100,27 +100,32 @@ def post_turn(conversation_id: str, data: TurnCreate, request: Request):
             data.context_refs,
         )
         uow.agent_turns.set_messages(turn["id"], user_message_id=user_message["id"])
-    settings = request.app.state.settings
     job_engine = get_job_engine(request.app)
     request_id = getattr(request.state, "request_id", "")
-
-    def _run_turn_thread():
-        request_id_var.set(request_id)
-        run_turn(
-            database,
-            settings,
-            job_engine,
+    executor = get_agent_turn_executor(request.app, job_engine)
+    try:
+        executor.submit(
             turn["id"],
             lambda event: _publish(turn["id"], event),
             request_id=request_id,
         )
-
-    thread = threading.Thread(
-        target=_run_turn_thread,
-        name=f"agent-turn-{turn['id'][:8]}",
-        daemon=True,
-    )
-    thread.start()
+    except AgentQueueFull as exc:
+        with UnitOfWork(database) as uow:
+            assistant_message = uow.conversations.add_message(
+                conversation_id,
+                "assistant",
+                "当前 Agent 任务过多，本回合未开始执行，请稍后重试。",
+            )
+            uow.agent_turns.set_messages(
+                turn["id"],
+                assistant_message_id=assistant_message["id"],
+            )
+            uow.agent_turns.set_status(
+                turn["id"],
+                "failed",
+                error=str(exc),
+            )
+        raise HTTPException(429, "Agent 任务队列已满，请稍后重试") from exc
     from app.application.agent.compaction import maybe_compact_conversation
 
     maybe_compact_conversation(database, job_engine, conversation_id)
