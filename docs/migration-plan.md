@@ -60,7 +60,8 @@
 - [x] 项目创建/编辑、批量建单元和单元编辑迁入 CommandBus。
 - [x] JSON Asset 创建与素材作用域编辑迁入 CommandBus，并支持显式清空关联。
 - [ ] 项目/单元删除、素材上传/删除、时间线编译和媒体写入迁入 CommandBus。
-- [ ] Agent 写工具只能调用 Command / Query API。
+- [x] Agent 的 write_artifact、create_units、generate_media 与两类提案工具改走 CommandBus，并按 turn/step 幂等。
+- [ ] Agent 后续新增的 mutating tool 必须只调用 Command / Query API。
 - [ ] 实现 inverse operation 执行器；当前只持久化逆操作描述。
 - [ ] 用户编辑、Agent 写入和提案采纳完全共享同一条语义写路径。
 

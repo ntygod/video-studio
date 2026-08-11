@@ -12,6 +12,7 @@ from .base import (
     OperationExecution,
     get_command_bus,
 )
+from .jobs import CreateJobCommand
 from .projects import (
     CreateProjectCommand,
     CreateUnitsCommand,
@@ -20,6 +21,8 @@ from .projects import (
 )
 from .proposals import (
     AcceptProposalCommand,
+    CreateArtifactChangeProposalCommand,
+    CreateStructureProposalCommand,
     RejectProposalCommand,
 )
 from .recovery import recover_interrupted_operations
@@ -31,9 +34,12 @@ __all__ = [
     "CommandContext",
     "CommandResult",
     "CommandValidationError",
+    "CreateArtifactChangeProposalCommand",
     "CreateArtifactCommand",
     "CreateAssetCommand",
+    "CreateJobCommand",
     "CreateProjectCommand",
+    "CreateStructureProposalCommand",
     "CreateUnitsCommand",
     "OperationExecution",
     "PatchAssetScopeCommand",
