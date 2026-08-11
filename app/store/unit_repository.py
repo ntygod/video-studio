@@ -7,6 +7,7 @@ from typing import Any
 
 from sqlalchemy import select
 
+from .graph_deletion_service import block_artifact_deletions
 from .models import ArtifactRow, AssetRow, CreativeUnitRow
 from .repositories import NotFoundError, UnitRepository
 from .semantic_graph_repository import (
@@ -55,15 +56,23 @@ class SemanticUnitRepository(UnitRepository):
                 )
             ).all()
         )
-        impacted = SemanticArtifactGraphRepository(
+        asset_impacts = SemanticArtifactGraphRepository(
             self.session
         ).on_assets_deleted(
             asset_ids,
             excluding_artifact_ids=deleted_artifact_ids,
         )
+        artifact_impacts = block_artifact_deletions(
+            self.session,
+            deleted_artifact_ids,
+            excluding_artifact_ids=deleted_artifact_ids,
+        )
         self.session.delete(row)
         self.session.flush()
-        return impacted
+        by_artifact: dict[str, dict[str, Any]] = {}
+        for impact in [*asset_impacts, *artifact_impacts]:
+            by_artifact[impact["artifact_id"]] = impact
+        return list(by_artifact.values())
 
 
 __all__ = ["SemanticUnitRepository"]

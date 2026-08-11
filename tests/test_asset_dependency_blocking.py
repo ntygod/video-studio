@@ -1,7 +1,14 @@
-def _artifact(client, project_id: str, name: str):
+def _artifact(
+    client,
+    project_id: str,
+    name: str,
+    *,
+    unit_id: str | None = None,
+):
     response = client.post(
         f"/api/projects/{project_id}/artifacts",
         json={
+            "unit_id": unit_id,
             "kind": "generated",
             "name": name,
             "payload": {"body": name},
@@ -140,3 +147,43 @@ def test_deleting_unit_blocks_external_artifact_that_uses_its_asset(
     ).json()
     assert freshness["status"] == "blocked"
     assert freshness["blocked_by_asset_ids"] == [asset["id"]]
+
+
+def test_deleting_unit_blocks_external_artifact_that_uses_its_artifact(
+    client,
+    project,
+):
+    unit = client.post(
+        f"/api/projects/{project['id']}/units",
+        json={"units": [{"title": "剧本单元"}]},
+    ).json()[0]
+    source = _artifact(
+        client,
+        project["id"],
+        "单元剧本",
+        unit_id=unit["id"],
+    )
+    external = _artifact(client, project["id"], "项目级镜头方案")
+    edge = client.post(
+        "/api/artifact-versions/"
+        f"{external['current_version']['id']}/derivation",
+        json={
+            "input_version_ids": [
+                source["current_version"]["id"]
+            ]
+        },
+        headers={"Idempotency-Key": "unit-artifact-external"},
+    )
+    assert edge.status_code == 201, edge.text
+
+    deleted = client.delete(
+        f"/api/projects/{project['id']}/units/{unit['id']}"
+    )
+    assert deleted.status_code == 200, deleted.text
+    freshness = client.get(
+        f"/api/artifacts/{external['id']}/freshness"
+    ).json()
+    assert freshness["status"] == "blocked"
+    assert source["current_version"]["id"] in freshness[
+        "stale_from_version_ids"
+    ]
