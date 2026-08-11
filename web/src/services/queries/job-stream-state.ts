@@ -1,4 +1,4 @@
-import type { JobDetail, JobEvent, JobStatus } from "../api/types.ts";
+import type { JobDetail, JobEvent, JobStatus } from "../api/types";
 
 export type JobStreamEvent = {
     id?: string;
