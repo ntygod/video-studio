@@ -13,9 +13,31 @@ from app.store.repositories import NotFoundError
 from .base import CommandValidationError, OperationExecution
 
 
+def _semantic_value(value: Any) -> Any:
+    """Remove transport/runtime metadata before computing idempotency.
+
+    Keys prefixed with ``_`` carry request IDs and other execution tracing. They
+    remain in the persisted Job payload, but a retried HTTP request naturally
+    receives a new request ID and must still replay the same logical command.
+    """
+
+    if isinstance(value, dict):
+        return {
+            str(key): _semantic_value(item)
+            for key, item in value.items()
+            if not str(key).startswith("_")
+        }
+    if isinstance(value, list):
+        return [_semantic_value(item) for item in value]
+    if isinstance(value, tuple):
+        return [_semantic_value(item) for item in value]
+    return value
+
+
 def _fingerprint(value: Any) -> dict[str, Any]:
+    semantic = _semantic_value(value)
     encoded = json.dumps(
-        value,
+        semantic,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
@@ -23,8 +45,8 @@ def _fingerprint(value: Any) -> dict[str, Any]:
     return {
         "payload_sha256": hashlib.sha256(encoded).hexdigest(),
         "payload_bytes": len(encoded),
-        "payload_keys": sorted(value.keys())
-        if isinstance(value, dict)
+        "payload_keys": sorted(semantic.keys())
+        if isinstance(semantic, dict)
         else [],
     }
 
