@@ -6,7 +6,7 @@
 
 - **项目（CreativeProject）**：一次完整创作。项目类型、工作流、格式均为开放文本标识，可以由用户自由定义。
 - **创作单元（CreativeUnit）**：任意层级的内容节点，例如章节、场景、镜头、广告活动、产品变体、研究文档。单元没有数量上限，unit_type、stage、custom_fields 全部开放。
-- **Artifact**：可版本化的创作产物（Brief、Bible、剧本、分镜、时间线等）。AI 不能直接修改，只能提交 ChangeProposal，用户接受后生成新的追加版本。
+- **Artifact**：可版本化的创作产物（Brief、Bible、剧本、分镜、时间线等）。已注册的核心类型通过版本化 schema 校验；开放类型继续作为 custom 保存。
 - **资产（Asset）**：项目内的图片、视频、声音、字幕、渲染结果等媒体文件，关联到任意创作单元或镜头。
 - **任务（Job）**：持久化的生成/渲染任务，重启后仍保留状态、事件与失败信息。
 - **模型渠道（Provider Profile）**：LLM、图片、视频、配音等能力均可配置外部 base_url / api_key / 模型。`openai` 适配器走 OpenAI 兼容协议与原生 tool calling，其余适配器回落到 JSON 协议模拟。
@@ -25,6 +25,8 @@ pnpm dev
 
 前端通过 `next.config.ts` 的 rewrites 把 `/api/*` 与 `/media/*` 代理到后端，默认不需要配置 `NEXT_PUBLIC_SERVER_URL`。
 
+数据库启动时自动执行 Alembic：新库运行 baseline，早期无 `alembic_version` 的现有库会保留数据并自动 stamp。后续结构变更不再通过删库完成。
+
 ## 数据目录
 
 - data/studio.db：项目、单元、对话、Artifact 版本、提案、模型渠道、任务（SQLite，WAL）
@@ -35,6 +37,7 @@ pnpm dev
 
 - /api/projects：项目 CRUD
 - /api/projects/{id}/units：任意创作单元树
+- /api/artifact-definitions：已注册 Artifact 类型与 JSON schema
 - /api/projects/{id}/artifacts、/api/artifacts/{id}/versions：版本化 Artifact
 - /api/proposals：AI 变更提案的接受/拒绝
 - /api/conversations：多轮对话创作

@@ -1,5 +1,6 @@
 """Canonical creative project domain models."""
 
+from .artifact_schemas import Screenplay, ScreenplayLine, ScreenplayScene
 from .asset import Asset, AssetCandidate, GenerationMetadata
 from .bible import (
     CharacterBible,

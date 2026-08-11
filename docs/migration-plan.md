@@ -36,14 +36,18 @@
 
 ## M1 · Artifact Definition Registry 与数据库迁移
 
-- 引入 Alembic 版本基线，停止删库升级。
-- 建立 `ArtifactDefinitionRegistry`。
-- 首批注册 brief、story_outline、screenplay、shot_plan、timeline。
-- 已知类型写入必须通过 schema 校验。
-- schema 升级通过显式 migration handler。
-- 未知类型降级为 custom，不自动进入生产链。
+- [x] 引入 Alembic baseline，停止以删库作为升级方案。
+- [x] 空数据库执行 baseline；现有 pre-Alembic 数据库保留数据并自动 stamp。
+- [x] 建立 `ArtifactDefinitionRegistry` 和显式 schema migration handler 机制。
+- [x] 首批注册 brief、story_outline/story_graph、screenplay、shot_plan、timeline。
+- [x] 同步注册当前项目必需的 project_bible。
+- [x] 已知类型所有写入统一经过 schema 校验和规范化。
+- [x] schema 校验失败返回结构化 422，后台任务则进入可观察失败状态。
+- [x] 未知类型继续开放保存，不自动进入正式生产链。
+- [x] 暴露 `/api/artifact-definitions`，供前端和工具读取版本化 schema。
+- [ ] 为五种核心类型补充领域级完整性 Evaluator；它属于 M5，不混入结构校验。
 
-**验收：** 五种核心 Artifact 有版本化 schema、验证错误可理解、旧数据库可以原地升级。
+**M1 验收：** 核心 Artifact 有版本化 schema；非法载荷无法落库；旧数据库无需删除即可采用 Alembic；开放类型仍兼容。
 
 ## M2 · CommandBus、OperationLog 与可靠撤销
 
