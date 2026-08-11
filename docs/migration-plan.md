@@ -49,34 +49,62 @@
 
 **M1 验收：** 核心 Artifact 有版本化 schema；非法载荷无法落库；旧数据库无需删除即可采用 Alembic；开放类型仍兼容。
 
-## M2 · CommandBus、OperationLog 与可靠撤销
+## M2 · CommandBus、OperationLog 与可靠补偿
+
+### 已完成
 
 - [x] 新增 `operation_logs` 持久化表与 Alembic 迁移。
-- [x] 建立带幂等键、前置条件、风险等级、影响实体和失败审计的 CommandBus。
-- [x] Artifact 创建、追加版本、恢复、批准、锁定已进入 CommandBus。
-- [x] 提案接受与拒绝已进入同一操作审计链。
-- [x] 暴露项目 OperationLog 查询 API。
-- [x] 应用启动时把上一进程遗留的 running Operation 标记为 interrupted/failed。
-- [x] 项目创建/编辑、批量建单元和单元编辑迁入 CommandBus。
-- [x] JSON Asset 创建与素材作用域编辑迁入 CommandBus，并支持显式清空关联。
-- [ ] 项目/单元删除、素材上传/删除、时间线编译和媒体写入迁入 CommandBus。
-- [x] Agent 的 write_artifact、create_units、generate_media 与两类提案工具改走 CommandBus，并按 turn/step 幂等。
-- [ ] Agent 后续新增的 mutating tool 必须只调用 Command / Query API。
-- [x] 实现首批安全 inverse operation 执行器：Artifact、项目/单元编辑、批量建单元、素材作用域、待处理提案与排队任务可补偿。
-- [ ] 项目/单元删除、素材文件删除等跨资源操作仍需快照或补偿协议后才能开放撤销。
-- [ ] 用户编辑、Agent 写入和提案采纳完全共享同一条语义写路径。
+- [x] 建立带业务幂等作用域、前置条件、风险等级、影响实体和失败审计的 CommandBus。
+- [x] Artifact 创建、追加版本、恢复、批准、锁定进入 CommandBus。
+- [x] 提案创建、接受和拒绝进入同一操作审计链。
+- [x] 项目创建/编辑、批量建单元和单元编辑进入 CommandBus。
+- [x] JSON Asset 创建、上传、作用域编辑和删除进入 CommandBus。
+- [x] 项目删除和单元子树删除采用媒体隔离与事务失败补偿。
+- [x] 时间线编译、渲染任务创建、单次/批量生成和批量配音任务创建进入 CommandBus。
+- [x] Agent 现有 mutating tools 通过 Command API，并按 turn / step 幂等。
+- [x] LLM、Provider 媒体、TTS、渲染和批量配音输出采用 Job / 槽位级幂等持久化。
+- [x] 应用启动时把遗留 running Operation 标记为 interrupted/failed，并清理或恢复可识别的媒体中断状态。
+- [x] 暴露项目 OperationLog 查询和安全补偿 API。
+- [x] 实现首批安全 inverse operation：Artifact、项目/单元编辑、批量建单元、素材作用域、待处理提案与排队任务。
 
-**阶段验收：** Artifact 主写链具备幂等和成功/失败审计；M2 完成验收仍要求所有核心写入口迁移并能执行确定性逆操作。
+### 保留边界
+
+- [ ] 项目、单元子树和媒体文件删除暂不提供完整关系快照的一键恢复；隔离副本用于崩溃恢复和审计。
+- [ ] 已开始执行或已完成的外部生成任务不做“复活式撤销”。
+- [ ] 后续新增 mutating tool 必须继续只调用 Command / Query API，并同时提供幂等、失败和审计测试。
+
+**M2 验收状态：** 核心 HTTP、Agent、Job 和媒体写入路径已收口；安全可逆操作具备确定性补偿，跨资源删除具备崩溃恢复边界。
 
 ## M3 · Dependency、Provenance 与 Freshness
 
-- 新增 ArtifactDependency、ArtifactProvenance、ArtifactFreshness。
-- 记录派生产物所使用的精确输入版本。
-- 上游新版本触发下游 stale 传播。
-- UI 显示影响范围和选择性重新生成入口。
-- 时间线和渲染结果纳入依赖图。
+### 已完成
 
-**验收：** 修改剧本后，相关 shot plan、storyboard、timeline 和 render 被准确标记；无关内容不受影响。
+- [x] 通过 Alembic 新增版本级 `ArtifactDependency`、`ArtifactProvenance` 和 `ArtifactFreshness`。
+- [x] 派生产物记录精确输入 ArtifactVersion，而不是模糊的 Artifact 当前状态。
+- [x] LLM 生成结果记录 Provider、Model、Prompt version、参数、seed、Attempt 和 Operation。
+- [x] 时间线编译记录实际采用的 edit plan 版本，并在 provenance 参数中记录所用 Asset ID。
+- [x] 上游 Artifact 追加新版本后，当前下游递归传播为 `stale`；无关 Artifact 不受影响。
+- [x] 暴露版本 provenance、Artifact freshness、dependencies 和 impact API。
+- [x] 增加项目级 `/api/projects/{id}/artifact-freshness` 聚合接口，默认只返回需要处理的内容。
+- [x] 工作台顶栏、Artifact 面板和结构树显示 `stale / blocked / needs_review`，结构树提供“需处理”筛选。
+- [x] 工作台可展开查看后续影响，并深链到目标 Artifact 的版本页。
+- [x] 对有完整可重放来源的 `stale` LLM Artifact 提供选择性重新生成：刷新精确输入、保持 Artifact 身份、只追加版本。
+- [x] 重新生成使用目标版本乐观锁与确定性 Job 幂等键；重复请求复用同一 Job，执行恢复不会重复追加版本。
+
+### 下一步
+
+- [ ] 建立一等的 `Asset → ArtifactVersion` 依赖边，以及 Asset 删除后的 `blocked` 递归传播。
+- [ ] 为缺失素材提供替换、解除阻塞和重新编译的显式操作。
+- [ ] 定义 `needs_review` 的自动转换条件和人工确认流程。
+- [ ] 支持用户选择多个受影响产物并执行批量 / 级联重新生成。
+- [ ] 为故事结构 → 剧本 → 镜头方案 → 分镜等更多生产链自动登记依赖。
+- [ ] 增加依赖环检测。
+- [ ] 增加图规模限制、数据库级游标遍历和大型项目性能基线。
+- [ ] 在项目库卡片显示项目级状态摘要。
+
+详细设计与现有限制见 `docs/m3-freshness-and-regeneration.md`。
+
+**M3 验收状态：** Artifact 版本依赖、`stale` 传播、工作台解释与单个 LLM Artifact 修复闭环已经成立；完整验收仍要求 Asset 阻塞传播、更多生产链依赖、批量修复与图安全边界。
 
 ## M4 · Durable Task Runtime 与 Agent 2.0
 

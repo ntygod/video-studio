@@ -119,3 +119,35 @@ body 13.5、label 12、caption 11、mono-sm 11.5；控制台 0 error。
 验证构建与 3001 服务已清理，next.config.ts / tsconfig.json 已还原。
 随后用还原后的配置正式 `pnpm build` 通过，3000 端口的旧 standalone 已替换为新构建
 （static/public 已复制，/ 与 /ui 均 200，运行时抽查 Inter/字号/字重全部符合）。
+
+## V2 M2/M3 内核实施（2026-08-11）
+
+### M2 写路径与补偿
+
+- HTTP、Agent、Job 和媒体产物写入统一通过 CommandBus / OperationLog；业务 payload 在审计中使用指纹和稳定引用，避免重复保存大对象。
+- Project / Unit 子树 / Asset 删除先把媒体移入 Operation 隔离区，数据库事务失败时恢复，进程重启时清理或恢复可识别的中断状态。
+- 上传、Provider 媒体、LLM Artifact、TTS、渲染和批量配音均使用 Operation 或 Job 槽位确定性命名与幂等键。
+- 安全 inverse 覆盖 Artifact、项目/单元编辑、批量建单元、素材作用域、待处理提案和 queued Job；跨资源删除保留隔离副本，但不宣传完整一键恢复。
+
+### M3 Freshness 与修复闭环
+
+- Alembic head `20260811_0004` 引入 Artifact 版本依赖、Provenance 与 Freshness。
+- 上游 Artifact 新版本只把仍为当前版本的下游递归标记为 `stale`，历史版本不被改写。
+- 项目级 Freshness 查询默认只返回需处理项；工作台顶栏、Artifact 面板和结构树共享同一查询模型。
+- 顶栏状态中心可查看原因、版本入口和递归影响范围；结构树可按“需处理”过滤。
+- `POST /api/artifacts/{id}/regenerate` 仅接受有完整可重放来源的 stale LLM Artifact：刷新精确输入，保持 Artifact ID，只追加新版本。
+- 重新生成用 `artifact-regenerate:{artifact_id}:{expected_version_id}` 防重复 Job，并在持久化阶段校验目标版本，避免晚到的模型结果越过人工编辑。
+- Job 已提交 Artifact 但尚未更新 result 时，重试会重放成功 Operation，不会再次调用模型或追加第二版。
+
+### 自动验证
+
+- 项目 Freshness 聚合、状态排序、Unit 聚合、精确输入刷新、同 Artifact 追加、恢复 fresh、并发冲突、不可重放来源拒绝和 API 级重复请求均有回归测试。
+- GitHub Actions 对最新实现依次执行后端测试、前端测试、lint、设计检查和生产构建；代码提交阶段全部通过。
+
+### 明确保留的缺口
+
+- 尚无一等 `Asset → ArtifactVersion` 依赖边，Asset 删除后的 `blocked` 自动传播未完成；timeline 中的 `asset_ids` 目前只是 provenance / metadata。
+- `needs_review` 已注册但尚无主动进入策略。
+- 依赖环检测、图规模限制、批量级联重新生成和更多生产链自动登记仍属于后续 M3。
+
+详细设计：`docs/m3-freshness-and-regeneration.md`。
