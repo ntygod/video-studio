@@ -7,8 +7,15 @@ from .base import (
     CommandBus,
     CommandContext,
     CommandResult,
+    CommandValidationError,
     OperationExecution,
     get_command_bus,
+)
+from .projects import (
+    CreateProjectCommand,
+    CreateUnitsCommand,
+    PatchProjectCommand,
+    PatchUnitCommand,
 )
 from .proposals import (
     AcceptProposalCommand,
@@ -22,8 +29,13 @@ __all__ = [
     "CommandBus",
     "CommandContext",
     "CommandResult",
+    "CommandValidationError",
     "CreateArtifactCommand",
+    "CreateProjectCommand",
+    "CreateUnitsCommand",
     "OperationExecution",
+    "PatchProjectCommand",
+    "PatchUnitCommand",
     "RejectProposalCommand",
     "SetArtifactVersionStatusCommand",
     "get_command_bus",
