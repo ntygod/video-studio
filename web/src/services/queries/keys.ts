@@ -24,6 +24,11 @@ export const qk = {
     proposalsRoot: (projectId: string) => ["proposals", projectId] as const,
     artifacts: (projectId: string, unitId?: string | null) => ["artifacts", projectId, scope(unitId)] as const,
 
+    freshnessRoot: (projectId: string) => ["artifact-freshness", projectId] as const,
+    freshness: (projectId: string, includeFresh = false) =>
+        ["artifact-freshness", projectId, includeFresh ? "all" : "actionable"] as const,
+    artifactImpact: (artifactId: string) => ["artifact-impact", artifactId] as const,
+
     conversationsRoot: (projectId: string) => ["conversations", projectId] as const,
     conversations: (projectId: string, unitId?: string | null) => ["conversations", projectId, scope(unitId)] as const,
     conversation: (conversationId: string) => ["conversation", conversationId] as const,
