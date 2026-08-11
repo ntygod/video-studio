@@ -19,6 +19,7 @@ from .projects import (
     PatchProjectCommand,
     PatchUnitCommand,
 )
+from .inverse import RevertOperationCommand
 from .proposals import (
     AcceptProposalCommand,
     CreateArtifactChangeProposalCommand,
@@ -46,6 +47,7 @@ __all__ = [
     "PatchProjectCommand",
     "PatchUnitCommand",
     "RejectProposalCommand",
+    "RevertOperationCommand",
     "SetArtifactVersionStatusCommand",
     "get_command_bus",
     "recover_interrupted_operations",

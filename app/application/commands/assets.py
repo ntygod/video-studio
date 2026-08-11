@@ -226,6 +226,8 @@ class PatchAssetScopeCommand:
                 "asset_id": self.asset_id,
                 "unit_id": before.get("unit_id"),
                 "shot_id": before.get("shot_id"),
+                "expected_unit_id": saved.get("unit_id"),
+                "expected_shot_id": saved.get("shot_id"),
             },
         )
 

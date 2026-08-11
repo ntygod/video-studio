@@ -458,6 +458,7 @@ class CreateUnitsCommand:
             ],
             inverse_operation={
                 "type": "unit.delete_many_if_pristine",
+                "project_id": self.project_id,
                 "unit_ids": self._input_ids,
             },
         )

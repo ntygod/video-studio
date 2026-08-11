@@ -62,7 +62,8 @@
 - [ ] 项目/单元删除、素材上传/删除、时间线编译和媒体写入迁入 CommandBus。
 - [x] Agent 的 write_artifact、create_units、generate_media 与两类提案工具改走 CommandBus，并按 turn/step 幂等。
 - [ ] Agent 后续新增的 mutating tool 必须只调用 Command / Query API。
-- [ ] 实现 inverse operation 执行器；当前只持久化逆操作描述。
+- [x] 实现首批安全 inverse operation 执行器：Artifact、项目/单元编辑、批量建单元、素材作用域、待处理提案与排队任务可补偿。
+- [ ] 项目/单元删除、素材文件删除等跨资源操作仍需快照或补偿协议后才能开放撤销。
 - [ ] 用户编辑、Agent 写入和提案采纳完全共享同一条语义写路径。
 
 **阶段验收：** Artifact 主写链具备幂等和成功/失败审计；M2 完成验收仍要求所有核心写入口迁移并能执行确定性逆操作。
