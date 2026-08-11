@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { History, RotateCcw } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 
 import { artifactKindLabel, artifactStatusLabel } from "@/features/workspace/lib/labels";
 import { useWorkspaceData } from "@/features/workspace/hooks/use-workspace-data";
@@ -24,16 +25,26 @@ function DiffValue({ value }: { value: unknown }) {
  */
 export function VersionsView() {
     const { message } = useApp();
+    const searchParams = useSearchParams();
+    const requestedArtifactId = searchParams.get("artifact");
     const { projectId, reviewableArtifacts } = useWorkspaceData();
     const [artifactId, setArtifactId] = useState<string | null>(null);
     const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
 
     useEffect(() => {
         setArtifactId((current) => {
+            if (
+                requestedArtifactId &&
+                reviewableArtifacts.some(
+                    (item) => item.id === requestedArtifactId,
+                )
+            ) {
+                return requestedArtifactId;
+            }
             if (current && reviewableArtifacts.some((item) => item.id === current)) return current;
             return reviewableArtifacts[0]?.id ?? null;
         });
-    }, [reviewableArtifacts]);
+    }, [requestedArtifactId, reviewableArtifacts]);
 
     const versionsQuery = useArtifactVersions(artifactId);
     const versions = useMemo(() => versionsQuery.data || [], [versionsQuery.data]);

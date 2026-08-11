@@ -34,7 +34,7 @@ export function useProposals(projectId: string) {
 }
 
 /**
- * 稿件变更后需要作废的作用域：稿件列表 + 待处理提案 + 项目统计。
+ * 稿件变更后需要作废的作用域：稿件列表 + 待处理提案 + 项目统计 + Freshness。
  */
 function useInvalidateArtifacts(projectId: string) {
     const client = useQueryClient();
@@ -42,6 +42,7 @@ function useInvalidateArtifacts(projectId: string) {
         client.invalidateQueries({ queryKey: qk.project(projectId) });
         client.invalidateQueries({ queryKey: qk.artifactsRoot(projectId) });
         client.invalidateQueries({ queryKey: qk.proposalsRoot(projectId) });
+        client.invalidateQueries({ queryKey: qk.freshnessRoot(projectId) });
     };
 }
 

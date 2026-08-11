@@ -4,6 +4,7 @@ import { AudioLines, Clapperboard, Compass, FileText, History, Images, LayoutGri
 import Link from "next/link";
 
 import { ThemePreferenceMenu } from "@/features/theme/components/theme-preference-menu";
+import { FreshnessCenter } from "@/features/workspace/components/freshness-center";
 import { useWorkspaceData } from "@/features/workspace/hooks/use-workspace-data";
 import { usePathname } from "next/navigation";
 
@@ -55,7 +56,7 @@ export function WorkspaceTopbar() {
 
     return (
         <header className="flex h-14 shrink-0 items-center gap-2 border-b border-[var(--hairline)] bg-[var(--s-panel)] px-2.5">
-            <Tooltip title={structureHidden ? "展开结构（⌘\）" : "收起结构（⌘\）"}>
+            <Tooltip title={structureHidden ? "展开结构（⌘\\）" : "收起结构（⌘\\）"}>
                 <Button
                     size="sm"
                     variant="ghost"
@@ -159,6 +160,7 @@ export function WorkspaceTopbar() {
             </div>
 
             <div className="flex shrink-0 items-center gap-1">
+                <FreshnessCenter projectId={projectId} />
                 <Tooltip title="命令面板（⌘K）">
                     <Button
                         size="sm"

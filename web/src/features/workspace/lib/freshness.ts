@@ -66,6 +66,29 @@ export function freshnessMeta(
     return META[status];
 }
 
+export function freshnessReason(
+    status: ArtifactFreshnessStatus,
+    reason?: string,
+): string {
+    const normalized = String(reason || "").toLowerCase();
+    if (
+        normalized.includes("upstream artifact") &&
+        normalized.includes("advanced")
+    ) {
+        return "上游内容已有新版本；当前结果仍基于旧输入。";
+    }
+    if (normalized.includes("non-current or stale inputs")) {
+        return "生成时采用的输入已不是最新版本。";
+    }
+    if (
+        normalized.includes("blocked") ||
+        normalized.includes("required asset")
+    ) {
+        return "至少一个必需输入已缺失或被阻塞。";
+    }
+    return reason || META[status].label;
+}
+
 export function isActionableFreshness(
     status: ArtifactFreshnessStatus,
 ): boolean {
