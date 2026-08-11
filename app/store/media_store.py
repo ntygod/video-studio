@@ -30,6 +30,16 @@ class MediaStore:
             raise ValueError("invalid media path")
         return path
 
+    @staticmethod
+    def _safe_suffix(suffix: str) -> str:
+        raw = str(suffix or "").lower().lstrip(".")
+        cleaned = "".join(
+            character
+            for character in raw
+            if character.isalnum()
+        )[:16]
+        return f".{cleaned or 'bin'}"
+
     def write_bytes(
         self,
         project_id: str,
@@ -37,11 +47,12 @@ class MediaStore:
         suffix: str,
         unit_id: str | None = None,
     ) -> tuple[str, str]:
-        """写入文件并返回 (相对 uri, sha256)。uri 形如 "<project_id>/[<unit_id>/]<uuid><suffix>"。"""
+        """写入文件并返回 (相对 uri, sha256)。"""
         folder = self.project_dir(project_id)
         if unit_id:
             folder = folder / unit_id
             folder.mkdir(parents=True, exist_ok=True)
+        suffix = self._safe_suffix(suffix)
         name = f"{uuid.uuid4().hex}{suffix}"
         target = folder / name
         temp = folder / f".{name}.tmp"
@@ -50,13 +61,76 @@ class MediaStore:
         relative = f"{project_id}/{unit_id}/" if unit_id else f"{project_id}/"
         return relative + name, hashlib.sha256(data).hexdigest()
 
+    def write_operation_bytes(
+        self,
+        project_id: str,
+        data: bytes,
+        suffix: str,
+        operation_id: str,
+        unit_id: str | None = None,
+    ) -> tuple[str, str]:
+        """以 Operation ID 写入确定性文件，支持请求幂等与崩溃清理。"""
+
+        if not operation_id or not all(
+            character.isalnum() or character in "-_"
+            for character in operation_id
+        ):
+            raise ValueError("invalid operation id")
+        folder = self.project_dir(project_id)
+        if unit_id:
+            folder = folder / unit_id
+            folder.mkdir(parents=True, exist_ok=True)
+        suffix = self._safe_suffix(suffix)
+        name = f"{operation_id}{suffix}"
+        target = folder / name
+        digest = hashlib.sha256(data).hexdigest()
+        if target.exists():
+            current = hashlib.sha256(target.read_bytes()).hexdigest()
+            if current != digest:
+                raise RuntimeError(
+                    "operation media path already contains different bytes"
+                )
+        else:
+            temp = folder / f".{name}.{uuid.uuid4().hex}.tmp"
+            try:
+                temp.write_bytes(data)
+                os.replace(temp, target)
+            finally:
+                temp.unlink(missing_ok=True)
+        relative = f"{project_id}/{unit_id}/" if unit_id else f"{project_id}/"
+        return relative + name, digest
+
+    def cleanup_operation_files(self, operation_id: str) -> list[str]:
+        """清理中断上传留下的确定性文件及其派生预览。"""
+
+        removed: list[str] = []
+        root = self.root.resolve()
+        for path in list(root.rglob(f"*{operation_id}*")):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(root)
+            if relative.parts and relative.parts[0] == ".trash":
+                continue
+            path.unlink(missing_ok=True)
+            removed.append(relative.as_posix())
+        # 只移除已空的项目/单元目录，不影响其他媒体。
+        directories = sorted(
+            [item for item in root.rglob("*") if item.is_dir()],
+            key=lambda item: len(item.parts),
+            reverse=True,
+        )
+        for directory in directories:
+            if directory == root or directory.name == ".trash":
+                continue
+            try:
+                directory.rmdir()
+            except OSError:
+                pass
+        return removed
+
     @staticmethod
     def _probe_image_header(path: Path) -> dict | None:
-        """从常见图片文件头读取尺寸，避免小图片依赖 ffprobe。
-
-        PNG/GIF 的尺寸位于固定偏移；JPEG 需要扫描到任一 SOF 段。该路径只解析
-        元数据，不解码像素，因此对于生成任务中的 1x1 图片也稳定且成本很低。
-        """
+        """从常见图片文件头读取尺寸，避免小图片依赖 ffprobe。"""
 
         with path.open("rb") as stream:
             header = stream.read(32)

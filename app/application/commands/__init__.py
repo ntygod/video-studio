@@ -3,7 +3,12 @@ from .artifacts import (
     CreateArtifactCommand,
     SetArtifactVersionStatusCommand,
 )
-from .assets import CreateAssetCommand, PatchAssetScopeCommand
+from .assets import (
+    CreateAssetCommand,
+    CreateUploadedAssetCommand,
+    MAX_UPLOAD_BYTES,
+    PatchAssetScopeCommand,
+)
 from .base import (
     CommandBus,
     CommandContext,
@@ -44,6 +49,8 @@ __all__ = [
     "CreateProjectCommand",
     "CreateStructureProposalCommand",
     "CreateUnitsCommand",
+    "CreateUploadedAssetCommand",
+    "MAX_UPLOAD_BYTES",
     "OperationExecution",
     "PatchAssetScopeCommand",
     "PatchProjectCommand",

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from sqlalchemy.exc import IntegrityError
 
@@ -31,6 +31,11 @@ class OperationExecution:
     affected_entities: list[dict[str, Any]]
     inverse_operation: dict[str, Any] | None = None
     audit_result: Any = None
+    # Called only when command.execute returned but the surrounding database
+    # transaction later failed. Cross-resource commands use it to compensate
+    # files staged before commit without leaking infrastructure details into
+    # the OperationLog JSON.
+    on_rollback: Callable[[], None] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +170,18 @@ class CommandBus:
             # a secondary audit failure without hiding the root cause.
             pass
 
+    @staticmethod
+    def _rollback_external(
+        execution: OperationExecution | None,
+    ) -> BaseException | None:
+        if execution is None or execution.on_rollback is None:
+            return None
+        try:
+            execution.on_rollback()
+        except BaseException as exc:  # compensation must not hide root error
+            return exc
+        return None
+
     def execute(
         self,
         command: SemanticCommand,
@@ -206,6 +223,7 @@ class CommandBus:
         if binder is not None:
             binder(operation["id"])
 
+        execution: OperationExecution | None = None
         try:
             # Business mutation and operation completion commit together.
             # Large payloads are not duplicated in the audit row: commands
@@ -228,7 +246,13 @@ class CommandBus:
                 result=execution.result,
             )
         except Exception as exc:
-            self._mark_failed(operation["id"], exc)
+            rollback_error = self._rollback_external(execution)
+            audit_error: BaseException = exc
+            if rollback_error is not None:
+                audit_error = RuntimeError(
+                    f"{exc}; external rollback failed: {rollback_error}"
+                )
+            self._mark_failed(operation["id"], audit_error)
             raise
 
 

@@ -25,11 +25,14 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:
     config.ensure_directories()
     database = Database(config.resolved_database_url())
     database.create_schema()
-    recover_interrupted_operations(database)
     media_store = MediaStore(
         config.media_dir,
         ffmpeg_path=config.ffmpeg_path,
         ffprobe_path=config.ffprobe_path,
+    )
+    recover_interrupted_operations(
+        database,
+        media_store=media_store,
     )
 
     with UnitOfWork(database) as uow:
