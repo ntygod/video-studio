@@ -1,15 +1,22 @@
+from dataclasses import replace
 from typing import Any
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
 from app.api.command_context import command_context
+from app.api.logging import current_request_id
 from app.application.commands import (
+    CreateJobCommand,
     RegisterArtifactDerivationCommand,
     get_command_bus,
 )
 from app.application.freshness_service import (
     list_project_artifact_freshness,
+)
+from app.application.job_engine import get_job_engine
+from app.application.regeneration_service import (
+    prepare_artifact_regeneration,
 )
 from app.store import UnitOfWork
 
@@ -61,6 +68,48 @@ def get_project_freshness(
             project_id,
             include_fresh=include_fresh,
         )
+
+
+@router.post(
+    "/api/artifacts/{artifact_id}/regenerate",
+    status_code=201,
+)
+def regenerate_artifact(
+    artifact_id: str,
+    request: Request,
+):
+    with UnitOfWork(request.app.state.database) as uow:
+        specification = prepare_artifact_regeneration(
+            uow,
+            artifact_id,
+        )
+
+    context = command_context(request)
+    if not context.idempotency_key:
+        context = replace(
+            context,
+            idempotency_key=(
+                "artifact-regenerate:"
+                f"{artifact_id}:"
+                f"{specification['expected_target_version_id']}"
+            ),
+        )
+    payload = {
+        **specification["payload"],
+        "_request_id": current_request_id(),
+    }
+    job = get_command_bus(request.app).execute(
+        CreateJobCommand(
+            project_id=specification["project_id"],
+            unit_id=specification["unit_id"],
+            job_type="generate",
+            payload=payload,
+        ),
+        context,
+    ).result
+    if job["status"] == "queued":
+        get_job_engine(request.app).submit(job["id"])
+    return job
 
 
 @router.get("/api/artifact-versions/{version_id}/provenance")

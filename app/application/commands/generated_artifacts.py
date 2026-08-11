@@ -119,6 +119,8 @@ class PersistGeneratedArtifactCommand:
         default_factory=dict
     )
     provenance: dict[str, Any] = field(default_factory=dict)
+    target_artifact_id: str | None = None
+    expected_target_version_id: str | None = None
     _operation_id: str | None = field(
         default=None,
         init=False,
@@ -131,10 +133,14 @@ class PersistGeneratedArtifactCommand:
 
     @property
     def target_id(self) -> str:
-        return self.project_id
+        return self.target_artifact_id or self.project_id
 
     @property
     def idempotency_scope(self) -> str:
+        if self.target_artifact_id:
+            return (
+                f"artifact:{self.target_artifact_id}:generated-version"
+            )
         unit = self.unit_id or "project"
         return f"project:{self.project_id}:{unit}:{self.kind}"
 
@@ -148,6 +154,10 @@ class PersistGeneratedArtifactCommand:
             "name": self.name,
             "schema_id": self.schema_id,
             "source": self.source,
+            "target_artifact_id": self.target_artifact_id,
+            "expected_target_version_id": (
+                self.expected_target_version_id
+            ),
             "input_version_ids": list(self.input_version_ids),
             "dependency_type": self.dependency_type,
             **_fingerprint(self.payload, "payload"),
@@ -170,6 +180,21 @@ class PersistGeneratedArtifactCommand:
                     "project_id": self.project_id,
                 }
             )
+        if self.target_artifact_id:
+            conditions.append(
+                {
+                    "type": "artifact_belongs_to_project",
+                    "artifact_id": self.target_artifact_id,
+                    "project_id": self.project_id,
+                }
+            )
+        if self.expected_target_version_id:
+            conditions.append(
+                {
+                    "type": "current_version_is",
+                    "id": self.expected_target_version_id,
+                }
+            )
         if self.input_version_ids:
             conditions.append(
                 {
@@ -179,6 +204,44 @@ class PersistGeneratedArtifactCommand:
                 }
             )
         return conditions
+
+    def _target_artifact(
+        self,
+        uow: UnitOfWork,
+    ) -> dict[str, Any] | None:
+        if not self.target_artifact_id:
+            return None
+        artifact = uow.artifacts.get(self.target_artifact_id)
+        if artifact["project_id"] != self.project_id:
+            raise ConflictError(
+                "generated Artifact target belongs to another project"
+            )
+        if artifact.get("unit_id") != self.unit_id:
+            raise ConflictError(
+                "generated Artifact target scope changed"
+            )
+        if artifact["kind"] != self.kind:
+            raise ConflictError(
+                "generated Artifact target kind changed"
+            )
+        if artifact["schema_id"] != self.schema_id:
+            raise ConflictError(
+                "generated Artifact target schema changed"
+            )
+        current = artifact.get("current_version") or {}
+        if (
+            self.expected_target_version_id
+            and current.get("id")
+            != self.expected_target_version_id
+        ):
+            raise ConflictError(
+                "target Artifact changed while regeneration was running"
+            )
+        if current.get("status") == "locked":
+            raise ConflictError(
+                "locked Artifact cannot receive a generated version"
+            )
+        return artifact
 
     def prepare(self, uow: UnitOfWork) -> None:
         uow.projects.get(self.project_id)
@@ -194,6 +257,7 @@ class PersistGeneratedArtifactCommand:
             unit = uow.units.get(self.unit_id)
             if unit.project_id != self.project_id:
                 raise NotFoundError(self.unit_id)
+        self._target_artifact(uow)
         for version_id in self.input_version_ids:
             version = uow.artifacts.get_version(version_id)
             artifact = uow.artifacts.get(version["artifact_id"])
@@ -207,8 +271,8 @@ class PersistGeneratedArtifactCommand:
             raise RuntimeError(
                 "generated Artifact command is not bound to an operation"
             )
-        artifact = None
-        if self.kind in SINGLETON_GENERATED_KINDS:
+        artifact = self._target_artifact(uow)
+        if artifact is None and self.kind in SINGLETON_GENERATED_KINDS:
             artifact = uow.artifacts.find_latest(
                 self.project_id,
                 self.unit_id,
@@ -237,7 +301,11 @@ class PersistGeneratedArtifactCommand:
                 artifact["id"],
                 self.payload,
                 source=self.source,
-                note=f"重新生成{self.name}",
+                note=(
+                    f"重新生成{artifact['name']}"
+                    if self.target_artifact_id
+                    else f"重新生成{self.name}"
+                ),
             )
             saved = uow.artifacts.get(artifact["id"])
             inverse = {

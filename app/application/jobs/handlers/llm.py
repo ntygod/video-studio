@@ -89,6 +89,12 @@ def run(ctx: JobContext) -> None:
         str(version_id)
         for version_id in payload.get("input_version_ids") or []
     ]
+    target_artifact_id = str(
+        payload.get("target_artifact_id") or ""
+    ) or None
+    expected_target_version_id = str(
+        payload.get("expected_target_version_id") or ""
+    ) or None
 
     existing, idempotency_key = generated_artifact_attempt(
         ctx.database,
@@ -127,6 +133,9 @@ def run(ctx: JobContext) -> None:
             dependency_type="generated_from",
             dependency_metadata={
                 "job_id": ctx.job["id"],
+                "regeneration_source_job_id": str(
+                    payload.get("_regeneration_source_job_id") or ""
+                ),
             },
             provenance={
                 "provider_profile_id": provider["id"],
@@ -140,6 +149,10 @@ def run(ctx: JobContext) -> None:
                     f"job:{ctx.job['id']}:attempt:{job.get('attempt', 0)}"
                 ),
             },
+            target_artifact_id=target_artifact_id,
+            expected_target_version_id=(
+                expected_target_version_id
+            ),
         ),
         CommandContext(
             actor_type="job",
