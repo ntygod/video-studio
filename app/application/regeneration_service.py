@@ -11,8 +11,9 @@ from app.store.repositories import ConflictError, NotFoundError
 _REGENERATION_INSTRUCTION = """
 
 [重新生成约束]
-这是对已有产物的选择性重新生成。context.current_inputs 是经过系统解析的最新输入，
-必须以它为准；如果旧 context 中存在冲突内容，忽略旧内容。保持原产物类型和用途，
+这是对已有产物的选择性重新生成。context.current_inputs 与
+context.current_asset_inputs 是经过系统解析的当前输入，必须以它们为准；
+如果旧 context 中存在冲突内容，忽略旧内容。保持原产物类型和用途，
 只修复由输入变化导致的内容差异。
 """.strip()
 
@@ -61,12 +62,7 @@ def prepare_artifact_regeneration(
     uow,
     artifact_id: str,
 ) -> dict[str, Any]:
-    """Build a new Job payload from exact provenance and current inputs.
-
-    No mutation occurs here. The caller still creates the Job through
-    ``CreateJobCommand``. A target version is captured so the eventual output
-    cannot append to an Artifact that changed while the Job was running.
-    """
+    """Build a new Job payload from exact provenance and current inputs."""
 
     artifact = uow.artifacts.get(artifact_id)
     current = artifact.get("current_version") or {}
@@ -154,6 +150,36 @@ def prepare_artifact_regeneration(
             }
         )
 
+    asset_dependencies = (
+        uow.artifact_graph.asset_dependencies_for_version(
+            current_version_id
+        )
+    )
+    input_asset_ids: list[str] = []
+    current_asset_inputs: list[dict[str, Any]] = []
+    for dependency in asset_dependencies:
+        asset_id = str(dependency["upstream_asset_id"])
+        if not dependency.get("asset_exists"):
+            raise ConflictError(
+                f"必需 Asset {asset_id} 已删除，无法重新生成"
+            )
+        asset = uow.assets.get(asset_id)
+        if asset["project_id"] != artifact["project_id"]:
+            raise ConflictError(
+                "重新生成不能使用其他项目的 Asset"
+            )
+        input_asset_ids.append(asset_id)
+        current_asset_inputs.append(
+            {
+                "asset_id": asset_id,
+                "asset_name": asset["name"],
+                "asset_kind": asset["kind"],
+                "mime_type": asset["mime_type"],
+                "uri": asset["uri"],
+                "metadata": deepcopy(asset.get("metadata") or {}),
+            }
+        )
+
     source_payload = deepcopy(source_job.get("payload") or {})
     source_context = source_payload.get("context")
     context = (
@@ -162,6 +188,7 @@ def prepare_artifact_regeneration(
         else {}
     )
     context["current_inputs"] = current_inputs
+    context["current_asset_inputs"] = current_asset_inputs
     context["regeneration"] = {
         "target_artifact_id": artifact_id,
         "previous_version_id": current_version_id,
@@ -190,6 +217,7 @@ def prepare_artifact_regeneration(
                 or {}
             ),
             "input_version_ids": refreshed_ids,
+            "input_asset_ids": input_asset_ids,
             "target_artifact_id": artifact_id,
             "expected_target_version_id": current_version_id,
             "_regeneration_source_job_id": source_job["id"],

@@ -28,6 +28,10 @@ class GenerateRequest(BaseModel):
         default_factory=list,
         max_length=500,
     )
+    input_asset_ids: list[str] = Field(
+        default_factory=list,
+        max_length=500,
+    )
     context: dict[str, Any] = Field(default_factory=dict)
     parameters: dict[str, Any] = Field(default_factory=dict)
 

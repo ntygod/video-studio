@@ -1,4 +1,4 @@
-"""LLM Job handler with durable Artifact provenance."""
+"""LLM Job handler with durable Artifact and Asset provenance."""
 
 import json
 from typing import Any
@@ -89,6 +89,10 @@ def run(ctx: JobContext) -> None:
         str(version_id)
         for version_id in payload.get("input_version_ids") or []
     ]
+    input_asset_ids = [
+        str(asset_id)
+        for asset_id in payload.get("input_asset_ids") or []
+    ]
     target_artifact_id = str(
         payload.get("target_artifact_id") or ""
     ) or None
@@ -130,7 +134,9 @@ def run(ctx: JobContext) -> None:
             payload=response,
             source="job",
             input_version_ids=input_version_ids,
+            input_asset_ids=input_asset_ids,
             dependency_type="generated_from",
+            asset_dependency_type="generated_with_asset",
             dependency_metadata={
                 "job_id": ctx.job["id"],
                 "regeneration_source_job_id": str(

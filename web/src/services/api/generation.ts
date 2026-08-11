@@ -22,9 +22,12 @@ export type GenerateInput = {
     capability: string;
     unit_id?: string | null;
     prompt?: string;
+    prompt_version?: string;
     schema_id?: string;
     artifact_kind?: string;
     artifact_name?: string;
+    input_version_ids?: string[];
+    input_asset_ids?: string[];
     context?: Record<string, unknown>;
     parameters?: Record<string, unknown>;
 };

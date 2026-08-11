@@ -114,7 +114,9 @@ class PersistGeneratedArtifactCommand:
     schema_id: str = "freeform"
     source: str = "job"
     input_version_ids: list[str] = field(default_factory=list)
+    input_asset_ids: list[str] = field(default_factory=list)
     dependency_type: str = "generated_from"
+    asset_dependency_type: str = "uses_asset"
     dependency_metadata: dict[str, Any] = field(
         default_factory=dict
     )
@@ -159,7 +161,9 @@ class PersistGeneratedArtifactCommand:
                 self.expected_target_version_id
             ),
             "input_version_ids": list(self.input_version_ids),
+            "input_asset_ids": list(self.input_asset_ids),
             "dependency_type": self.dependency_type,
+            "asset_dependency_type": self.asset_dependency_type,
             **_fingerprint(self.payload, "payload"),
             **_fingerprint(
                 self.dependency_metadata,
@@ -200,6 +204,14 @@ class PersistGeneratedArtifactCommand:
                 {
                     "type": "artifact_versions_belong_to_project",
                     "version_ids": list(self.input_version_ids),
+                    "project_id": self.project_id,
+                }
+            )
+        if self.input_asset_ids:
+            conditions.append(
+                {
+                    "type": "assets_belong_to_project",
+                    "asset_ids": list(self.input_asset_ids),
                     "project_id": self.project_id,
                 }
             )
@@ -265,6 +277,12 @@ class PersistGeneratedArtifactCommand:
                 raise ConflictError(
                     "generated Artifact input belongs to another project"
                 )
+        for asset_id in self.input_asset_ids:
+            asset = uow.assets.get(asset_id)
+            if asset["project_id"] != self.project_id:
+                raise ConflictError(
+                    "generated Asset input belongs to another project"
+                )
 
     def execute(self, uow: UnitOfWork) -> OperationExecution:
         if not self._operation_id:
@@ -324,6 +342,12 @@ class PersistGeneratedArtifactCommand:
                 **deepcopy(self.provenance),
                 "operation_id": self._operation_id,
             },
+        )
+        uow.artifact_graph.register_asset_dependencies(
+            str(version["id"]),
+            self.input_asset_ids,
+            dependency_type=self.asset_dependency_type,
+            metadata=deepcopy(self.dependency_metadata),
         )
         snapshot = _artifact_snapshot(saved)
         return OperationExecution(
