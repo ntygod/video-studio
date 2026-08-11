@@ -17,9 +17,26 @@ def test_artifact_api_is_idempotent_and_audited(client, project):
     operation = matching[0]
     assert operation["status"] == "succeeded"
     assert operation["operation_type"] == "artifact.create"
-    assert operation["result"] == {"artifact_id": first.json()["id"]}
+    assert operation["result"]["artifact"]["id"] == first.json()["id"]
+    assert operation["result"]["version_id"] == first.json()["current_version"]["id"]
     assert operation["arguments"]["payload_sha256"]
     assert "payload" not in operation["arguments"]
+
+
+def test_idempotent_create_replays_original_version_snapshot(client, project):
+    headers = {"Idempotency-Key": "create-snapshot"}
+    body = {"kind": "custom_note", "name": "snapshot", "payload": {"body": "v1"}}
+    created = client.post(f"/api/projects/{project['id']}/artifacts", json=body, headers=headers).json()
+    original_version_id = created["current_version"]["id"]
+    appended = client.post(f"/api/artifacts/{created['id']}/versions", json={"payload": {"body": "v2"}})
+    assert appended.status_code == 201
+    assert appended.json()["id"] != original_version_id
+    replay = client.post(f"/api/projects/{project['id']}/artifacts", json=body, headers=headers)
+    assert replay.status_code == 201
+    assert replay.json()["current_version"]["id"] == original_version_id
+    assert replay.json()["current_version"]["payload"] == {"body": "v1"}
+    current = client.get(f"/api/artifacts/{created['id']}").json()
+    assert current["current_version"]["payload"] == {"body": "v2"}
 
 
 def test_failed_schema_command_is_persisted(client, project):
