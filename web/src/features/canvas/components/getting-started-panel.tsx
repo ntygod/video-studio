@@ -1,6 +1,5 @@
 "use client";
 
-import { Button } from "antd";
 import { ArrowRight, Check, Clapperboard, FilePlus2, Images, MessageCircle, Plus, Settings2, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -8,10 +7,11 @@ import { useRouter } from "next/navigation";
 import { useWorkspaceData } from "@/features/workspace/hooks/use-workspace-data";
 import { useWorkspaceRoute } from "@/features/workspace/hooks/use-workspace-route";
 import { useWorkspaceStore } from "@/features/workspace/stores/use-workspace-store";
-import { META_ARTIFACT_KINDS } from "@/features/workspace/lib/labels";
+import { hasContentArtifact } from "@/features/workspace/lib/labels";
 import { useHasLlm } from "@/services/queries";
 import { useIsAgentInline } from "@/shared/hooks/use-media-query";
 import { cn } from "@/shared/lib/utils";
+import { Button, Text } from "@/shared/ui";
 
 type NextStep = {
     title: string;
@@ -30,7 +30,7 @@ type NextStep = {
  */
 export function GettingStartedPanel({ onCreateUnit }: { onCreateUnit: () => void }) {
     const router = useRouter();
-    const { project, assets } = useWorkspaceData();
+    const { project, units, artifacts, assets } = useWorkspaceData();
     const { hrefFor } = useWorkspaceRoute();
     const hasLlm = useHasLlm();
 
@@ -47,8 +47,8 @@ export function GettingStartedPanel({ onCreateUnit }: { onCreateUnit: () => void
     if (!project) return null;
 
     const directionDone = Boolean(project.brief.concept.trim() && project.brief.objective.trim());
-    const structureDone = project.units.length > 0;
-    const contentDone = project.artifacts.some((artifact) => !META_ARTIFACT_KINDS.includes(artifact.kind));
+    const structureDone = units.length > 0;
+    const contentDone = hasContentArtifact(artifacts);
     const assetsDone = assets.length > 0;
 
     const steps = [
@@ -108,21 +108,25 @@ export function GettingStartedPanel({ onCreateUnit }: { onCreateUnit: () => void
 
     const NextIcon = next.icon;
     const actionButton = (
-        <Button type="primary" icon={<NextIcon className="size-4" />} onClick={next.onClick ?? (() => router.push(next.href as string))}>
+        <Button variant="primary" icon={<NextIcon className="size-4" />} onClick={next.onClick ?? (() => router.push(next.href as string))}>
             {next.label}
         </Button>
     );
 
     return (
-        <section className="overflow-hidden rounded-lg border border-[var(--studio-action-line)] bg-[var(--studio-surface)]">
+        <section className="overflow-hidden rounded-[var(--r-md)] bg-[var(--s-panel)] shadow-[var(--lift)]">
             <div className="grid lg:grid-cols-[minmax(0,1.15fr)_minmax(260px,0.85fr)]">
                 <div className="p-5 md:p-6">
-                    <div className="flex items-center gap-2 text-[11px] font-semibold text-[var(--studio-action)]">
-                        <Sparkles className="size-4" />
+                    <div className="flex items-center gap-2 text-caption font-semibold text-[var(--s-muted)]">
+                        <Sparkles className="size-4 text-[var(--s-faint)]" />
                         建议下一步
                     </div>
-                    <h2 className="mt-3 text-[18px] font-semibold text-[var(--studio-ink)]">{next.title}</h2>
-                    <p className="mt-2 max-w-xl text-[13px] leading-6 text-[var(--studio-muted)]">{next.description}</p>
+                    <Text as="h2" variant="title" tone="ink" className="mt-3">
+                        {next.title}
+                    </Text>
+                    <Text as="p" variant="body" tone="muted" className="mt-2 max-w-xl leading-6">
+                        {next.description}
+                    </Text>
                     <div className="mt-5 flex flex-wrap gap-2">
                         {actionButton}
                         {!directionDone && hasLlm ? (
@@ -133,8 +137,8 @@ export function GettingStartedPanel({ onCreateUnit }: { onCreateUnit: () => void
                     </div>
                 </div>
 
-                <div className="border-t border-[var(--studio-line)] bg-[var(--studio-surface-raised)] p-5 lg:border-l lg:border-t-0">
-                    <div className="text-[11px] font-semibold text-[var(--studio-muted)]">创作进度</div>
+                <div className="border-t border-[var(--hairline)] bg-[var(--s-raised)] p-5 lg:border-l lg:border-t-0">
+                    <div className="text-caption font-semibold text-[var(--s-muted)]">创作进度</div>
                     <ol className="mt-4 space-y-3">
                         {steps.map((step) => {
                             const StepIcon = step.icon;
@@ -143,23 +147,14 @@ export function GettingStartedPanel({ onCreateUnit }: { onCreateUnit: () => void
                                     <span
                                         className={cn(
                                             "flex size-7 shrink-0 items-center justify-center rounded-full border",
-                                            step.done
-                                                ? "border-[var(--studio-action)] bg-[var(--studio-action)] text-[var(--studio-action-foreground)]"
-                                                : "border-[var(--studio-line-strong)] text-[var(--studio-faint)]",
+                                            step.done ? "border-[var(--s-ink)] bg-[var(--s-ink)] text-[var(--s-base)]" : "border-[var(--hairline-strong)] text-[var(--s-faint)]",
                                         )}
                                     >
                                         {step.done ? <Check className="size-3.5" /> : <StepIcon className="size-3.5" />}
                                     </span>
                                     <div className="min-w-0">
-                                        <div
-                                            className={cn(
-                                                "text-[13px]",
-                                                step.done ? "text-[var(--studio-ink)]" : "text-[var(--studio-muted)]",
-                                            )}
-                                        >
-                                            {step.label}
-                                        </div>
-                                        <div className="truncate text-[10px] text-[var(--studio-faint)]">{step.detail}</div>
+                                        <div className={cn("text-body", step.done ? "text-[var(--s-ink)]" : "text-[var(--s-muted)]")}>{step.label}</div>
+                                        <div className="truncate text-caption text-[var(--s-faint)]">{step.detail}</div>
                                     </div>
                                 </li>
                             );

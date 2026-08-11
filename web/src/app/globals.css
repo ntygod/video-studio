@@ -1,28 +1,20 @@
 @import "tailwindcss";
 
 /*
- * Video Studio 设计令牌
- * ---------------------
- * 暗色优先：媒体创作工具里图片和视频只有在近黑背景上才显色准确，浅色是可选项。
+ * Video Studio 设计令牌（Cinematic Workspace 重构版）
+ * ----------------------------------------------------
+ * 材质分层：canvas 媒体井 / base 页面底 / panel chrome / raised 输入与嵌套 / overlay 浮层。
+ * 三条规则：
+ *   1. 媒体永远坐在最深的表面上，不描边，靠底色反差托它。
+ *   2. 同层不画线，只有跨层级才用 hairline。
+ *   3. 卡片靠 panel + lift 浮起来，不靠边框。
  *
- * 字号梯度（组件里直接写 text-[Npx]，只允许这五档）：
- *   11px 辅助说明 · 12px 次要文本 · 13px 正文/控件 · 15px 小标题 · 20px 页面标题
- *
- * 命名约定：
- *   surface 系列  = 从底到上的三层表面
- *   line 系列     = 描边
- *   ink/text/muted/faint = 文字由强到弱
- *   action 系列   = 主操作色（唯一的强调色）
+ * 字号梯度（只允许这七档）：
+ *   display 28 / title 19 / heading 15 / body 13.5 / label 12 / caption 11 / mono-sm 11.5
+ * 间距基线 4px：4 / 8 / 12 / 16 / 24 / 32 / 48。
  */
 
-@font-face {
-    font-family: "Bricolage Grotesque";
-    src: url("/fonts/bricolage-grotesque-latin-wght-normal.woff2") format("woff2");
-    font-display: swap;
-    font-style: normal;
-    font-weight: 200 800;
-}
-
+/* ── 展示字体：Syne（已下载）。Inter 由 @fontsource-variable/inter 在 layout.tsx 引入。 ── */
 @font-face {
     font-family: "Syne";
     src: url("/fonts/syne-latin-wght-normal.woff2") format("woff2");
@@ -33,100 +25,154 @@
 
 :root,
 html[data-theme="dark"] {
-    /* 表面 */
-    --studio-bg: #050606;
-    --studio-surface: #0c0e0d;
-    --studio-surface-raised: #121512;
-    --studio-surface-hover: #181c18;
+    /* 表面层级：真中性，去掉绿味 */
+    --s-canvas: #0a0a0b; /* 最深：媒体井、播放器、日志。让画面自己发光 */
+    --s-base: #0f0f11; /* 页面底 */
+    --s-panel: #161619; /* chrome：侧栏、顶栏、卡片 */
+    --s-raised: #202024; /* 输入框、hover、嵌套块 */
+    --s-overlay: #29292e; /* 浮层：菜单、气泡、tooltip */
 
-    /* 描边 */
-    --studio-line: #242824;
-    --studio-line-strong: #363c36;
+    /* 分隔线不再是"颜色"，而是半透明白，随底色自动适配 */
+    --hairline: rgba(255, 255, 255, 0.055); /* 内部分隔 */
+    --hairline-strong: rgba(255, 255, 255, 0.1); /* 卡片外沿、控件边 */
 
-    /* 文字 */
-    --studio-ink: #f3f6f0;
-    --studio-text: #c2c9c0;
-    --studio-muted: #858d84;
-    --studio-faint: #727a71;
+    /* 暗色下阴影几乎不可见，靠"顶部高光"造立体感 */
+    --lift: inset 0 1px 0 rgba(255, 255, 255, 0.045);
 
-    /* 主操作色 */
-    --studio-action: #c7f36b;
-    --studio-action-hover: #d6ff82;
-    --studio-action-emphasis: #afda54;
-    --studio-action-foreground: #11170a;
-    --studio-action-soft: color-mix(in srgb, var(--studio-action) 16%, transparent);
-    --studio-action-line: color-mix(in srgb, var(--studio-action) 36%, transparent);
+    /* 文字：四档必须肉眼可分。对比度（压在 --s-panel 上）标在后面 */
+    --s-ink: #f3f1eb; /* 标题与主要内容 */
+    --s-text: #c8c6c0; /* 正文 */
+    --s-muted: #b0aea8; /* 次要说明 */
+    --s-faint: #97979c; /* 元信息，仍满足 AA */
 
-    /* 语义色 */
-    --studio-success: #5ed69b;
-    --studio-warning: #f3c969;
-    --studio-danger: #ff7c7c;
-    --studio-info: #75b7f5;
+    /* 主操作色：电影工作流橙，只用于主按钮、当前选择和运行态。 */
+    --s-action: #ff7540;
+    --s-action-hover: #ff936c;
+    --s-action-emphasis: #e95f2b;
+    --s-action-foreground: #160b06;
+    --s-action-soft: color-mix(in srgb, var(--s-action) 16%, transparent);
+    --s-action-line: color-mix(in srgb, var(--s-action) 36%, transparent);
+
+    /* 语义色：只用于文字与 1px 描边，不做大面积填充 */
+    --s-success: #61d69c;
+    --s-warning: #f0c869;
+    --s-danger: #ff7d7d;
+    --s-info: #6aaee0;
+
+    /* 品牌渐变（wordmark 等极少量装饰） */
+    --s-brand-start: #8db2ff;
+    --s-brand-end: #ff95d1;
+
+    /* 阴影：暗色下主要靠 lift，阴影只用于浮层与 hover 抬升 */
+    --s-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+    --s-shadow-md: 0 8px 24px rgba(0, 0, 0, 0.38);
+    --s-shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.45);
 
     /* 圆角 */
-    --studio-r-sm: 6px;
-    --studio-r-md: 10px;
-    --studio-r-lg: 16px;
+    --r-xs: 5px; /* 媒体缩略图、chip */
+    --r-sm: 8px; /* 控件、按钮、输入框 */
+    --r-md: 11px; /* 卡片、面板 */
+    --r-lg: 14px; /* 浮层、模态 */
 
-    /* 阴影 */
-    --studio-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --studio-shadow: 0 12px 32px rgba(0, 0, 0, 0.36);
-
-    /* 品牌标识渐变 */
-    --studio-brand-start: #8db2ff;
-    --studio-brand-end: #ff95d1;
-
-    --studio-scrollbar: rgba(148, 163, 184, 0.45);
+    /* 间距：4px 基线网格 */
+    --sp-1: 4px;
+    --sp-2: 8px;
+    --sp-3: 12px;
+    --sp-4: 16px;
+    --sp-6: 24px;
+    --sp-8: 32px;
+    --sp-12: 48px;
 
     /* 动效 */
-    --studio-ease: cubic-bezier(0.16, 1, 0.3, 1);
-    --studio-dur: 180ms;
+    --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+    --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+    --dur-fast: 160ms;
+    --dur-base: 220ms;
+    --dur-slow: 320ms;
+
+    --s-scrollbar: rgba(148, 163, 184, 0.32);
 
     color-scheme: dark;
 }
 
 html[data-theme="light"] {
-    --studio-bg: #f4f5f2;
-    --studio-surface: #ffffff;
-    --studio-surface-raised: #ecefe9;
-    --studio-surface-hover: #e5e9e2;
+    /*
+     * 浅色不是简单反转：媒体井要比卡片略深，图片才有边界；
+     * 浮层要 >= panel 再靠阴影抬起，比 panel 深会读成"凹陷"。
+     */
+    --s-canvas: #f7f6f2; /* 媒体井 */
+    --s-base: #efeee9; /* 页面底 */
+    --s-panel: #fffefa; /* chrome：侧栏、顶栏、卡片 */
+    --s-raised: #eceae3; /* 输入框、hover、嵌套块 */
+    --s-overlay: #fffefa; /* 浮层：与 panel 同色，靠 shadow-lg 浮起 */
 
-    --studio-line: #dce1da;
-    --studio-line-strong: #c7cec4;
+    --hairline: rgba(15, 16, 17, 0.06);
+    --hairline-strong: rgba(15, 16, 17, 0.1);
 
-    --studio-ink: #171a17;
-    --studio-text: #394037;
-    --studio-muted: #596157;
-    --studio-faint: #687066;
+    /* 浅色下白卡压白底，纯白内高光是看不见的——改用极淡投影 + 1px 环给出边界 */
+    --lift:
+        0 1px 2px rgba(15, 16, 17, 0.05),
+        0 0 0 1px rgba(15, 16, 17, 0.045);
 
-    --studio-action: #526f1e;
-    --studio-action-hover: #648625;
-    --studio-action-emphasis: #405718;
-    --studio-action-foreground: #ffffff;
-    --studio-action-soft: color-mix(in srgb, var(--studio-action) 12%, transparent);
-    --studio-action-line: color-mix(in srgb, var(--studio-action) 32%, transparent);
+    --s-ink: #191918;
+    --s-text: #41413e;
+    --s-muted: #565650;
+    --s-faint: #62625d;
 
-    --studio-success: #1f7a4d;
-    --studio-warning: #8a5c00;
-    --studio-danger: #b42318;
-    --studio-info: #28679b;
+    --s-action: #b9471c;
+    --s-action-hover: #a63c15;
+    --s-action-emphasis: #913410;
+    --s-action-foreground: #ffffff;
+    --s-action-soft: color-mix(in srgb, var(--s-action) 12%, transparent);
+    --s-action-line: color-mix(in srgb, var(--s-action) 32%, transparent);
 
-    --studio-shadow-sm: 0 1px 2px rgba(23, 26, 23, 0.06);
-    --studio-shadow: 0 8px 24px rgba(23, 26, 23, 0.08);
+    --s-success: #1f7a52;
+    --s-warning: #8a5c00;
+    --s-danger: #b42318;
+    --s-info: #2f678f;
 
-    --studio-brand-start: #5d8fff;
-    --studio-brand-end: #f46ab8;
+    --s-brand-start: #5d8fff;
+    --s-brand-end: #f46ab8;
 
-    --studio-scrollbar: rgba(71, 85, 105, 0.45);
+    --s-shadow-sm: 0 1px 2px rgba(23, 26, 23, 0.06);
+    --s-shadow-md: 0 8px 24px rgba(23, 26, 23, 0.08);
+    --s-shadow-lg: 0 16px 40px rgba(23, 26, 23, 0.1);
+
+    --s-scrollbar: rgba(71, 85, 105, 0.4);
 
     color-scheme: light;
 }
 
-/* Tailwind 的 bg-*/text-* 也能取到主题色，供少数需要走 utility 的场景使用。 */
+/* Tailwind 主题：字体与字号尺度 */
+@theme {
+    --font-sans: "Inter", "PingFang SC", "Noto Sans SC", ui-sans-serif, system-ui, -apple-system, "Microsoft YaHei", sans-serif;
+    --font-display: "Inter", "PingFang SC", "Noto Sans SC", ui-sans-serif, sans-serif;
+    --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+    --text-display: 28px;
+    --text-display--line-height: 1.15;
+    --text-title: 19px;
+    --text-title--line-height: 1.3;
+    --text-heading: 15px;
+    --text-heading--line-height: 1.4;
+    --text-body: 13.5px;
+    /* 产品是中文优先：正文直接按中文行高设定，不再靠 :lang() 覆盖（那条在 utilities 层前会失效） */
+    --text-body--line-height: 1.65;
+    --text-label: 12px;
+    --text-label--line-height: 1.4;
+    --text-caption: 11px;
+    --text-caption--line-height: 1.35;
+    --text-mono-sm: 11.5px;
+    --text-mono-sm--line-height: 1.4;
+
+    --animate-s-caret: s-caret 1.1s var(--ease-in-out) infinite;
+    --animate-s-pop: s-pop 240ms var(--ease-out) both;
+}
+
 @theme inline {
-    --color-background: var(--studio-bg);
-    --color-foreground: var(--studio-ink);
-    --color-border: var(--studio-line);
+    --color-background: var(--s-base);
+    --color-foreground: var(--s-ink);
+    --color-border: var(--hairline);
 }
 
 @layer base {
@@ -137,7 +183,7 @@ html[data-theme="light"] {
     *,
     ::before,
     ::after {
-        border-color: var(--studio-line);
+        border-color: var(--hairline);
     }
 
     html,
@@ -147,14 +193,16 @@ html[data-theme="light"] {
     }
 
     body {
-        background: var(--studio-bg);
-        color: var(--studio-text);
+        background: var(--s-base);
+        color: var(--s-text);
+        font-family: var(--font-sans);
         -webkit-font-smoothing: antialiased;
+        text-rendering: optimizeLegibility;
     }
 
     /* 统一焦点样式：键盘可达性靠它，不允许各组件各写一套。 */
     :focus-visible {
-        outline: 2px solid var(--studio-action-line);
+        outline: 2px solid var(--s-action-line);
         outline-offset: 2px;
     }
 
@@ -180,7 +228,7 @@ html[data-theme="light"] {
 
     /* 细滚动条，用于日志、消息流等需要位置感的地方。 */
     .thin-scrollbar {
-        scrollbar-color: var(--studio-scrollbar) transparent;
+        scrollbar-color: var(--s-scrollbar) transparent;
         scrollbar-width: thin;
     }
 
@@ -190,20 +238,107 @@ html[data-theme="light"] {
     }
 
     .thin-scrollbar::-webkit-scrollbar-thumb {
-        background: var(--studio-scrollbar);
+        background: var(--s-scrollbar);
         border-radius: 999px;
+    }
+
+    /* 卡片顶部高光，造立体感 */
+    .lift {
+        box-shadow: var(--lift);
+    }
+
+    /* 面板开合 / 折叠：宽度 + 透明度 */
+    .panel-transition {
+        transition:
+            width var(--dur-base) var(--ease-in-out),
+            opacity var(--dur-base) var(--ease-out),
+            transform var(--dur-base) var(--ease-out);
+    }
+
+    /* 乐观更新落定：60% → 100% 透明度，不位移 */
+    .optimistic-in {
+        animation: s-fade-in var(--dur-fast) var(--ease-out) both;
+    }
+
+    /* 生成中表面 shimmer */
+    .s-shimmer {
+        position: relative;
+        overflow: hidden;
+        background:
+            linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.06) 50%, transparent 70%),
+            var(--s-raised);
+        background-repeat: no-repeat;
+        background-size: 200% 100%;
+        animation: s-shimmer 1.6s linear infinite;
+    }
+
+    /* 流式输出末尾光标 */
+    .s-caret {
+        display: inline-block;
+        width: 2px;
+        height: 1em;
+        margin-left: 1px;
+        border-radius: 1px;
+        vertical-align: -0.125em;
+        background: var(--s-muted);
+        animation: s-caret 1.1s var(--ease-in-out) infinite;
+    }
+}
+
+@keyframes s-fade-in {
+    from {
+        opacity: 0.6;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes s-caret {
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0;
+    }
+}
+
+@keyframes s-shimmer {
+    0% {
+        background-position: -200% 0;
+    }
+
+    100% {
+        background-position: 200% 0;
+    }
+}
+
+@keyframes s-pop {
+    0% {
+        transform: scale(1);
+    }
+
+    50% {
+        transform: scale(1.25);
+    }
+
+    100% {
+        transform: scale(1);
     }
 }
 
 /* ── 全局侧栏（项目库 / 任务 / 设置） ─────────────────────────────── */
 
 .studio-shell-bg {
-    background: var(--studio-bg);
+    background: var(--s-base);
 }
 
 .studio-sidebar-rail {
-    background: var(--studio-surface);
-    border-right: 1px solid var(--studio-line);
+    background: var(--s-panel);
+    border-right: 1px solid var(--hairline);
 }
 
 .sidebar-brand-mark {
@@ -216,54 +351,64 @@ html[data-theme="light"] {
 }
 
 .sidebar-rail-item {
+    position: relative;
     display: flex;
-    min-height: 58px;
+    min-height: 36px;
     width: 100%;
-    flex-direction: column;
+    flex-direction: row;
     align-items: center;
     justify-content: center;
-    gap: 4px;
-    border-radius: var(--studio-r-sm);
+    gap: 0;
+    border-radius: var(--r-sm);
     padding-inline: 4px;
-    color: var(--studio-muted);
-    font-size: 11px;
+    color: var(--s-muted);
+    font-size: 0;
     font-weight: 500;
     line-height: 1.2;
     text-align: center;
     transition:
-        background-color var(--studio-dur) var(--studio-ease),
-        color var(--studio-dur) var(--studio-ease);
+        background-color var(--dur-base) var(--ease-out),
+        color var(--dur-base) var(--ease-out);
 }
 
 .sidebar-rail-icon {
     display: inline-flex;
-    width: 28px;
-    height: 28px;
+    width: 32px;
+    height: 32px;
     align-items: center;
     justify-content: center;
 }
 
 .sidebar-rail-label {
-    max-width: 100%;
+    position: absolute;
+    width: 1px;
+    height: 1px;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    clip: rect(0, 0, 0, 0);
 }
 
 .sidebar-rail-item-inactive:hover,
 .sidebar-rail-item-inactive:focus-visible {
-    background: var(--studio-surface-hover);
-    color: var(--studio-ink);
+    background: var(--s-raised);
+    color: var(--s-ink);
 }
 
+/* 激活导航：提亮文字 + raised 底 + 左侧 2px 强调指示条，不用大面积强调色 */
 .sidebar-rail-item-active {
-    background: var(--studio-action);
-    color: var(--studio-action-foreground);
+    background: var(--s-raised);
+    color: var(--s-ink);
 }
 
-.sidebar-rail-item-active svg,
-.sidebar-rail-item-active .sidebar-rail-label {
-    color: var(--studio-action-foreground);
+.sidebar-rail-item-active::before {
+    content: "";
+    position: absolute;
+    left: 2px;
+    top: 50%;
+    translate: 0 -50%;
+    width: 2px;
+    height: 16px;
+    border-radius: 999px;
+    background: var(--s-action);
 }
 
 .sidebar-rail-action,
@@ -273,49 +418,58 @@ html[data-theme="light"] {
     height: 36px;
     align-items: center;
     justify-content: center;
-    border-radius: var(--studio-r-sm);
+    border-radius: var(--r-sm);
     background: transparent;
-    color: var(--studio-muted);
+    color: var(--s-muted);
     font-size: 12px;
     font-weight: 600;
     transition:
-        background-color var(--studio-dur) var(--studio-ease),
-        color var(--studio-dur) var(--studio-ease);
+        background-color var(--dur-base) var(--ease-out),
+        color var(--dur-base) var(--ease-out);
 }
 
 .sidebar-rail-action:hover,
 .sidebar-user-dot:hover {
-    background: var(--studio-surface-hover);
-    color: var(--studio-ink);
+    background: var(--s-raised);
+    color: var(--s-ink);
+}
+
+/* 项目库封面：没有媒体封面时仍保持明确的项目身份，不用空白占位图。 */
+.studio-project-cover {
+    background:
+        linear-gradient(115deg, transparent 8%, color-mix(in srgb, var(--s-panel) 20%, transparent) 50%, transparent 72%),
+        linear-gradient(145deg, color-mix(in srgb, var(--s-info) 28%, var(--s-canvas)), color-mix(in srgb, var(--s-brand-end) 34%, var(--s-panel)));
+}
+
+.studio-project-cover[data-tone="1"] {
+    background:
+        linear-gradient(115deg, transparent 8%, color-mix(in srgb, var(--s-panel) 20%, transparent) 50%, transparent 72%),
+        linear-gradient(145deg, color-mix(in srgb, var(--s-warning) 24%, var(--s-canvas)), color-mix(in srgb, var(--s-action) 38%, var(--s-panel)));
+}
+
+.studio-project-cover[data-tone="2"] {
+    background:
+        linear-gradient(115deg, transparent 8%, color-mix(in srgb, var(--s-panel) 20%, transparent) 50%, transparent 72%),
+        linear-gradient(145deg, color-mix(in srgb, var(--s-success) 22%, var(--s-canvas)), color-mix(in srgb, var(--s-info) 36%, var(--s-panel)));
+}
+
+.studio-project-cover[data-tone="3"] {
+    background:
+        linear-gradient(115deg, transparent 8%, color-mix(in srgb, var(--s-panel) 20%, transparent) 50%, transparent 72%),
+        linear-gradient(145deg, color-mix(in srgb, var(--s-danger) 20%, var(--s-canvas)), color-mix(in srgb, var(--s-brand-end) 30%, var(--s-panel)));
 }
 
 /* ── 对话 ──────────────────────────────────────────────────────── */
 
-.chat-msg-in {
-    animation: chat-msg-in 280ms var(--studio-ease) both;
-}
-
-@keyframes chat-msg-in {
-    from {
-        opacity: 0;
-        transform: translateY(8px);
-    }
-
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
 .chat-composer-box {
     transition:
-        border-color var(--studio-dur) var(--studio-ease),
-        box-shadow var(--studio-dur) var(--studio-ease);
+        border-color var(--dur-base) var(--ease-out),
+        box-shadow var(--dur-base) var(--ease-out);
 }
 
 .chat-composer-box:focus-within {
-    border-color: var(--studio-action-line);
-    box-shadow: 0 0 0 3px var(--studio-action-soft);
+    border-color: var(--s-action-line);
+    box-shadow: 0 0 0 3px var(--s-action-soft);
 }
 
 .chat-composer-textarea {
@@ -349,18 +503,19 @@ html[data-theme="light"] {
 }
 
 .markdown-body code {
-    border: 1px solid var(--studio-line);
+    border: 1px solid var(--hairline);
     border-radius: 4px;
-    background: var(--studio-surface);
+    background: var(--s-raised);
     padding: 0 4px;
+    font-family: var(--font-mono);
     font-size: 12px;
 }
 
 .markdown-body pre {
     margin: 0.4rem 0;
     overflow-x: auto;
-    border-radius: var(--studio-r-sm);
-    background: var(--studio-bg);
+    border-radius: var(--r-sm);
+    background: var(--s-canvas);
     padding: 10px;
 }
 
@@ -372,13 +527,13 @@ html[data-theme="light"] {
 
 .markdown-body blockquote {
     margin: 0.4rem 0;
-    border-left: 3px solid var(--studio-action-line);
-    color: var(--studio-muted);
+    border-left: 3px solid var(--s-action-line);
+    color: var(--s-muted);
     padding-left: 10px;
 }
 
 .markdown-body a {
-    color: var(--studio-action);
+    color: var(--s-action);
     text-decoration: underline;
     text-underline-offset: 2px;
 }
@@ -391,7 +546,7 @@ html[data-theme="light"] {
 
 .markdown-body th,
 .markdown-body td {
-    border: 1px solid var(--studio-line);
+    border: 1px solid var(--hairline);
     padding: 4px 8px;
 }
 

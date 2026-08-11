@@ -43,7 +43,11 @@ class UnitsCreate(BaseModel):
 @router.get("")
 def list_projects(request: Request):
     with UnitOfWork(request.app.state.database) as uow:
-        return [item.model_dump(mode="json") for item in uow.projects.list()]
+        projects = [item.model_dump(mode="json") for item in uow.projects.list()]
+        summaries = {item["id"]: item for item in uow.projects.summaries()}
+        for project in projects:
+            project.update(summaries.get(project["id"], {}))
+        return projects
 
 
 @router.post("", status_code=201)
@@ -55,14 +59,10 @@ def post_project(data: ProjectCreate, request: Request):
 
 @router.get("/{project_id}")
 def get_project(project_id: str, request: Request):
+    """项目详情瘦身（T3.1）：只回项目本身 + 统计，不再内嵌 units/artifacts/proposals。"""
     with UnitOfWork(request.app.state.database) as uow:
         project = uow.projects.get(project_id)
-        return {
-            **project.model_dump(mode="json"),
-            "units": [item.model_dump(mode="json") for item in uow.units.list(project_id)],
-            "artifacts": uow.artifacts.list(project_id),
-            "pending_proposals": uow.proposals.list(project_id, status="pending"),
-        }
+        return {**project.model_dump(mode="json"), **uow.projects.stats(project_id)}
 
 
 @router.patch("/{project_id}")
@@ -81,13 +81,23 @@ def delete_project(project_id: str, request: Request):
 
 
 @router.get("/{project_id}/units")
-def list_units(project_id: str, request: Request, parent_id: str | None = None):
+def list_units(
+    project_id: str,
+    request: Request,
+    parent_id: str | None = None,
+    depth: int = 1,
+    limit: int = 200,
+    cursor: str | None = None,
+):
     with UnitOfWork(request.app.state.database) as uow:
         uow.projects.get(project_id)
-        return [
-            item.model_dump(mode="json")
-            for item in uow.units.list(project_id, parent_id=parent_id)
-        ]
+        return uow.units.list_page(
+            project_id,
+            parent_id=parent_id,
+            depth=depth,
+            limit=limit,
+            cursor=cursor,
+        )
 
 
 @router.post("/{project_id}/units", status_code=201)
@@ -116,7 +126,9 @@ def get_unit(project_id: str, unit_id: str, request: Request):
                 item.model_dump(mode="json")
                 for item in uow.units.list(project_id, parent_id=unit_id)
             ],
-            "artifacts": uow.artifacts.list(project_id, unit_id=unit_id),
+            "artifacts": uow.artifacts.list(
+                project_id, unit_id=unit_id, include_payload=False
+            ),
         }
 
 
@@ -155,3 +167,22 @@ def delete_unit(project_id: str, unit_id: str, request: Request):
         uow.units.delete(unit_id)
     return {"ok": True}
 
+
+
+@router.get("/{project_id}/search")
+def search_project(
+    project_id: str,
+    request: Request,
+    q: str = "",
+    type: str = "all",
+    limit: int = 20,
+):
+    """FTS5 全文检索（T3.2），同时是 Agent search 工具的后端。"""
+    from app.store.repositories import NotFoundError
+
+    with UnitOfWork(request.app.state.database) as uow:
+        try:
+            uow.projects.get(project_id)
+        except NotFoundError:
+            raise
+        return uow.search.search(project_id, q, kind=type, limit=limit)

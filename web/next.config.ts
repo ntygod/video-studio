@@ -10,9 +10,6 @@ export default function nextConfig(phase: string): NextConfig {
         output: "standalone",
         poweredByHeader: false,
         allowedDevOrigins: isDev ? ["*.*.*.*"] : [],
-        typescript: {
-            ignoreBuildErrors: true,
-        },
         env: {
             NEXT_PUBLIC_APP_VERSION: process.env.NEXT_PUBLIC_APP_VERSION || "dev",
         },

@@ -8,13 +8,29 @@ from typing import Any
 
 
 def _resolve(settings, uri: str) -> str:
+    if uri.startswith("/media/"):
+        uri = uri[len("/media/"):]
     path = Path(uri)
     if path.is_absolute():
         return str(path)
     return str((settings.media_dir / uri).resolve())
 
 
-def render_timeline(settings, project_id: str, timeline: dict[str, Any]):
+def render_timeline(
+    settings,
+    project_id: str,
+    timeline: dict[str, Any],
+    progress=None,
+    should_cancel=None,
+    asset_resolver=None,
+):
+    """渲染时间线。
+
+    progress: Callable[[float], None] | None，ffmpeg -progress pipe:1 换算成 0-1。
+    should_cancel: Callable[[], bool] | None，协作式取消（终止 ffmpeg 进程）。
+    asset_resolver: Callable[[str], str] | None，把 clip.asset_id 解析成媒体绝对路径
+        （T4.1：asset_id 现在是真实素材 id，需查库后再取 uri）。
+    """
     width = int(timeline.get("width", 1080))
     height = int(timeline.get("height", 1920))
     fps = int(timeline.get("fps", 30))
@@ -36,7 +52,9 @@ def render_timeline(settings, project_id: str, timeline: dict[str, Any]):
             asset_id = clip.get("asset_id")
             if not asset_id:
                 continue
-            path = _resolve(settings, asset_id)
+            path = asset_resolver(asset_id) if asset_resolver else _resolve(settings, asset_id)
+            if not path:
+                continue
             start = float(clip.get("range", {}).get("start", 0.0))
             duration = float(clip.get("range", {}).get("duration", 1.0))
             if kind in ("video", "image"):
@@ -134,7 +152,32 @@ def render_timeline(settings, project_id: str, timeline: dict[str, Any]):
             str(output),
         ]
     )
-    result = subprocess.run(command, capture_output=True, text=True, timeout=3600)
-    if result.returncode != 0:
-        raise RuntimeError(f"ffmpeg render failed: {result.stderr[-2000:]}")
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    total_duration = max(duration, 1.0)
+    try:
+        assert process.stdout is not None
+        for line in process.stdout:
+            if should_cancel and should_cancel():
+                process.terminate()
+                raise RuntimeError("render canceled")
+            if line.startswith("out_time_ms="):
+                try:
+                    out_ms = int(line.strip().split("=", 1)[1])
+                    ratio = min(1.0, (out_ms / 1000.0) / total_duration)
+                    if progress:
+                        progress(ratio)
+                except ValueError:
+                    pass
+        stderr = process.stderr.read() if process.stderr else ""
+        return_code = process.wait(timeout=60)
+    except Exception:
+        process.kill()
+        raise
+    if return_code != 0:
+        raise RuntimeError(f"ffmpeg render failed: {stderr[-2000:]}")
     return output.as_posix(), duration

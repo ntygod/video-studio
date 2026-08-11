@@ -1,0 +1,9 @@
+/*
+ * antd reset 包进独立 CSS layer。
+ *
+ * 直接 import "antd/dist/reset.css" 时它的规则是"无层"的，会压过 Tailwind v4
+ * 的 theme/base/components/utilities 层——h1-h6 的 font-weight:500、p 的
+ * margin-bottom:1em 会把 Text 的字重和排版间距全部顶掉。
+ * 这里声明在最前面，让 Tailwind 的 utilities 仍然可以正常覆盖。
+ */
+@import "antd/dist/reset.css" layer(antd-reset);

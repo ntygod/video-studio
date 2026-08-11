@@ -9,7 +9,7 @@
 - **Artifact**：可版本化的创作产物（Brief、Bible、剧本、分镜、时间线等）。AI 不能直接修改，只能提交 ChangeProposal，用户接受后生成新的追加版本。
 - **资产（Asset）**：项目内的图片、视频、声音、字幕、渲染结果等媒体文件，关联到任意创作单元或镜头。
 - **任务（Job）**：持久化的生成/渲染任务，重启后仍保留状态、事件与失败信息。
-- **模型渠道（Provider Profile）**：LLM、图片、视频、配音等能力均可配置外部 base_url / api_key / 模型，支持 OpenAI 兼容与 Anthropic 适配器。
+- **模型渠道（Provider Profile）**：LLM、图片、视频、配音等能力均可配置外部 base_url / api_key / 模型。`openai` 适配器走 OpenAI 兼容协议与原生 tool calling，其余适配器回落到 JSON 协议模拟。
 
 ## 快速开始
 

@@ -1,9 +1,9 @@
 "use client";
 
 import { Suspense, type ReactNode } from "react";
-import { Spin } from "antd";
 
 import { WorkspaceShell } from "@/features/workspace/components/workspace-shell";
+import { Spin } from "@/shared/ui";
 
 /**
  * 项目工作台布局。

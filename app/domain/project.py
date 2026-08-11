@@ -25,6 +25,7 @@ class ProjectSettings(DomainModel):
     default_language: str = "zh-CN"
     delivery_profiles: list[DeliveryProfile] = Field(default_factory=list)
     provider_overrides: dict[str, str] = Field(default_factory=dict)
+    pinned_refs: list[dict[str, str]] = Field(default_factory=list)
 
 
 class CreativeProject(DomainModel):

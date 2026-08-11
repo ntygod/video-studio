@@ -59,7 +59,7 @@ export function PanelResizer({
             aria-label={label}
             tabIndex={0}
             className={cn(
-                "group relative w-px shrink-0 cursor-col-resize bg-[var(--studio-line)]",
+                "group relative w-px shrink-0 cursor-col-resize bg-[var(--hairline)]",
                 "focus-visible:outline-none",
             )}
             onMouseDown={(event) => {
@@ -78,7 +78,7 @@ export function PanelResizer({
         >
             {/* 命中区域比视觉宽度大，避免 1px 难以抓取。 */}
             <span className="absolute inset-y-0 -left-1 -right-1 block" />
-            <span className="absolute inset-y-0 left-0 w-px bg-[var(--studio-action)] opacity-0 transition-opacity group-hover:opacity-60 group-focus-visible:opacity-100" />
+            <span className="absolute inset-y-0 left-0 w-px bg-[var(--s-action)] opacity-0 transition-opacity group-hover:opacity-60 group-focus-visible:opacity-100" />
         </div>
     );
 }

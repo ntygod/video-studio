@@ -1,4 +1,4 @@
-from . import artifacts, assets, conversations, edit, generate, health, jobs, media, projects, proposals, providers, timeline, voice, workflows
+from . import artifacts, assets, conversations, edit, generate, health, jobs, media, projects, proposals, providers, timeline, voice
 
 routers = [
     health.router,
@@ -8,7 +8,6 @@ routers = [
     proposals.router,
     providers.router,
     jobs.router,
-    workflows.router,
     assets.router,
     media.router,
     timeline.router,

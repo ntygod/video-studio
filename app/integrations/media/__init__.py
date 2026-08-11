@@ -1,3 +1,8 @@
-from .client import generate_image, generate_video
+from .base import (
+    MediaProvider,
+    MediaProviderError,
+    SyncProviderAdapter,
+    build_media_provider,
+)
 
-__all__ = ["generate_image", "generate_video"]
+__all__ = ["MediaProvider", "MediaProviderError", "SyncProviderAdapter", "build_media_provider"]

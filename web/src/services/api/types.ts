@@ -159,10 +159,64 @@ export type Conversation = {
     messages?: ConversationMessage[];
 };
 
-export type SendMessageResult = {
+export type TurnStatus = "running" | "succeeded" | "failed" | "canceled" | "reverted";
+
+export type TurnStep = {
+    id: string;
+    turn_id: string;
+    seq: number;
+    kind: "tool" | "message" | "error";
+    tool_name: string;
+    arguments: Record<string, unknown>;
+    result: Record<string, unknown>;
+    summary: string;
+    status: "running" | "ok" | "failed";
+    error: string;
+    duration_ms: number;
+    created_at: number;
+};
+
+export type AgentTurn = {
+    id: string;
+    conversation_id: string;
+    project_id: string;
+    unit_id: string | null;
+    user_message_id: string | null;
+    assistant_message_id: string | null;
+    status: TurnStatus;
+    context_refs: Array<{ type: string; id?: string; section?: string }>;
+    created_entities: Array<{ type: "artifact" | "unit" | "asset" | "job"; id: string }>;
+    prompt_tokens: number;
+    completion_tokens: number;
+    error: string;
+    created_at: number;
+    updated_at: number;
+    steps?: TurnStep[];
+};
+
+export type StartTurnResult = {
+    turn_id: string;
     user_message: ConversationMessage;
-    assistant_message: ConversationMessage;
-    proposals: Proposal[];
+};
+
+export type AgentTurnEvent = {
+    id?: string;
+    type: "step.start" | "step.done" | "token" | "proposal" | "entity" | "error" | "done";
+    step_id?: string;
+    tool?: string;
+    args_preview?: string;
+    ok?: boolean;
+    duration_ms?: number;
+    summary?: string;
+    text?: string;
+    message?: string;
+    recoverable?: boolean;
+    entity?: { type: string; id: string };
+    proposal?: Proposal;
+    message_id?: string | null;
+    usage?: { prompt: number; completion: number };
+    canceled?: boolean;
+    failed?: boolean;
 };
 
 export type ProviderModel = {
@@ -172,6 +226,7 @@ export type ProviderModel = {
     capability_type: string;
     capabilities: Record<string, unknown>;
     defaults: Record<string, unknown>;
+    is_default: boolean;
 };
 
 export type ProviderProfile = {
@@ -195,6 +250,7 @@ export type ModelCapability = {
     capability_type: string;
     capabilities: Record<string, unknown>;
     defaults: Record<string, unknown>;
+    is_default: boolean;
     provider_profile_id: string;
     provider_name: string;
     adapter: string;
@@ -230,24 +286,6 @@ export type JobEvent = {
 
 export type JobDetail = Job & { events?: JobEvent[] };
 
-export type WorkflowDefinition = {
-    version?: string;
-    entry_nodes?: string[];
-    nodes?: Record<string, unknown>;
-    edges?: Array<Record<string, unknown>>;
-    global_parameters?: Record<string, unknown>;
-};
-
-export type Workflow = {
-    id: string;
-    name: string;
-    description: string;
-    version: string;
-    definition: WorkflowDefinition;
-    created_at: number;
-    updated_at: number;
-};
-
 export type Asset = {
     id: string;
     project_id: string;
@@ -256,6 +294,7 @@ export type Asset = {
     kind: string;
     name: string;
     uri: string;
+    thumb_uri: string;
     mime_type: string;
     sha256: string;
     parent_asset_id: string | null;
@@ -264,10 +303,38 @@ export type Asset = {
     created_at: number;
 };
 
+/** 分页响应：items + 不透明游标（(created_at,id) 复合）。 */
+export type Page<T> = {
+    items: T[];
+    next_cursor: string | null;
+};
+
+/** 项目详情已瘦身（T3.1）：只回项目本身 + 统计，不再内嵌列表。 */
 export type ProjectDetail = Project & {
-    units: CreativeUnit[];
-    artifacts: Artifact[];
-    pending_proposals: Proposal[];
+    unit_count: number;
+    artifact_count: number;
+    asset_count: number;
+    pending_proposal_count: number;
+    last_activity: number;
+};
+
+/** 项目库列表卡片所需的聚合字段（T3.4）。 */
+export type ProjectSummary = {
+    id: string;
+    cover_asset_id: string | null;
+    cover_asset_uri: string;
+    pending_proposal_count: number;
+    unit_count: number;
+    last_activity: number;
+};
+
+/** FTS 检索结果（T3.2）。 */
+export type SearchHit = {
+    type: "unit" | "artifact";
+    id: string;
+    title: string;
+    snippet: string;
+    unit_id: string | null;
 };
 
 export type HealthStatus = {

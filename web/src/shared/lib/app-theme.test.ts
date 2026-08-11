@@ -33,19 +33,19 @@ test("antd 主题的主色与语义色取自调色板", () => {
         assert.equal(config.token?.colorPrimary, palette.action);
         assert.equal(config.token?.colorError, palette.danger);
         assert.equal(config.token?.colorSuccess, palette.success);
-        assert.equal(config.token?.colorBgLayout, palette.bg);
+        assert.equal(config.token?.colorBgLayout, palette.base);
         assert.equal(config.token?.colorText, palette.ink);
     }
 });
 
-test("弹窗类容器统一使用 surface 作为底色", () => {
+test("弹窗类容器统一使用 overlay 作为底色", () => {
     for (const theme of ["light", "dark"] as const) {
         const palette = paletteFor(theme);
         const modal = getAntThemeConfig(theme).components?.Modal;
 
-        assert.equal(modal?.contentBg, palette.surface);
-        assert.equal(modal?.headerBg, palette.surface);
-        assert.equal(modal?.footerBg, palette.surface);
+        assert.equal(modal?.contentBg, palette.overlay);
+        assert.equal(modal?.headerBg, palette.overlay);
+        assert.equal(modal?.footerBg, palette.overlay);
     }
 });
 

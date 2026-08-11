@@ -4,7 +4,8 @@ import { cookies } from "next/headers";
 import { AntdRegistry } from "@ant-design/nextjs-registry";
 import { AppProviders } from "@/features/app-shell/components/app-providers";
 import { buildThemeBootstrapScript, getInitialResolvedTheme, readThemePreferenceFromCookieStore } from "@/shared/lib/theme-preference";
-import "antd/dist/reset.css";
+import "@fontsource-variable/inter";
+import "./antd-reset.css";
 import "./globals.css";
 import React from "react";
 
@@ -36,11 +37,7 @@ export default async function RootLayout({
             data-theme-preference={initialThemePreference}
             style={{ colorScheme: initialResolvedTheme }}
         >
-            <body
-                style={{
-                    fontFamily: '"SF Pro Display","SF Pro Text","PingFang SC","Microsoft YaHei","Helvetica Neue",sans-serif',
-                }}
-            >
+            <body>
                 <Script id="theme-script" strategy="beforeInteractive" dangerouslySetInnerHTML={{ __html: buildThemeBootstrapScript(initialThemePreference) }} />
                 <AntdRegistry>
                     <AppProviders initialThemePreference={initialThemePreference} initialResolvedTheme={initialResolvedTheme}>
@@ -51,4 +48,3 @@ export default async function RootLayout({
         </html>
     );
 }
-

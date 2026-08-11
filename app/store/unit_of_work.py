@@ -1,4 +1,5 @@
 from .repositories import (
+    AgentTurnRepository,
     ArtifactRepository,
     AssetRepository,
     ConversationRepository,
@@ -6,8 +7,8 @@ from .repositories import (
     ProjectRepository,
     ProposalRepository,
     ProviderRepository,
+    SearchRepository,
     UnitRepository,
-    WorkflowRepository,
 )
 
 
@@ -26,7 +27,8 @@ class UnitOfWork:
         self.providers = ProviderRepository(self.session)
         self.assets = AssetRepository(self.session)
         self.jobs = JobRepository(self.session)
-        self.workflows = WorkflowRepository(self.session)
+        self.agent_turns = AgentTurnRepository(self.session)
+        self.search = SearchRepository(self.session)
         return self
 
     def __exit__(self, exc_type, exc, tb):

@@ -60,19 +60,19 @@ function Scalar({ value }: { value: string | number | boolean }) {
 }
 
 function Value({ value, depth = 0 }: { value: unknown; depth?: number }): ReactNode {
-    if (value == null || value === "") return <span className="text-[var(--studio-faint)]">暂无内容</span>;
+    if (value == null || value === "") return <span className="text-[var(--s-faint)]">暂无内容</span>;
     if (["string", "number", "boolean"].includes(typeof value)) {
         return <Scalar value={value as string | number | boolean} />;
     }
     if (Array.isArray(value)) {
-        if (!value.length) return <span className="text-[var(--studio-faint)]">暂无内容</span>;
+        if (!value.length) return <span className="text-[var(--s-faint)]">暂无内容</span>;
         if (value.every((item) => ["string", "number", "boolean"].includes(typeof item))) {
             return (
                 <div className="flex flex-wrap gap-1.5">
                     {value.map((item, index) => (
                         <span
                             key={index}
-                            className="rounded-md bg-[var(--studio-surface-raised)] px-2 py-1 text-[11px] text-[var(--studio-muted)]"
+                            className="rounded-md bg-[var(--s-raised)] px-2 py-1 text-caption text-[var(--s-muted)]"
                         >
                             <Scalar value={item as string | number | boolean} />
                         </span>
@@ -83,7 +83,7 @@ function Value({ value, depth = 0 }: { value: unknown; depth?: number }): ReactN
         return (
             <div className="space-y-3">
                 {value.map((item, index) => (
-                    <div key={index} className="border-l-2 border-[var(--studio-line)] pl-3">
+                    <div key={index} className="border-l-2 border-[var(--hairline)] pl-3">
                         <Value value={item} depth={depth + 1} />
                     </div>
                 ))}
@@ -92,13 +92,13 @@ function Value({ value, depth = 0 }: { value: unknown; depth?: number }): ReactN
     }
 
     const entries = Object.entries(value as Record<string, unknown>).filter(([, item]) => !isEmpty(item));
-    if (!entries.length) return <span className="text-[var(--studio-faint)]">暂无内容</span>;
+    if (!entries.length) return <span className="text-[var(--s-faint)]">暂无内容</span>;
     return (
         <div className={depth > 1 ? "space-y-2" : "grid gap-3 sm:grid-cols-2"}>
             {entries.map(([key, item]) => (
                 <div key={key} className="min-w-0">
-                    <div className="mb-1 text-[10px] font-medium text-[var(--studio-faint)]">{fieldLabel(key)}</div>
-                    <div className="text-[13px] leading-6 text-[var(--studio-ink)]">
+                    <div className="mb-1 text-caption font-medium text-[var(--s-faint)]">{fieldLabel(key)}</div>
+                    <div className="text-body leading-6 text-[var(--s-ink)]">
                         <Value value={item} depth={depth + 1} />
                     </div>
                 </div>
@@ -116,15 +116,15 @@ function Value({ value, depth = 0 }: { value: unknown; depth?: number }): ReactN
 export function ArtifactContentView({ payload }: { payload: Record<string, unknown> }) {
     const entries = Object.entries(payload).filter(([, value]) => !isEmpty(value));
     if (!entries.length) {
-        return <div className="py-10 text-center text-[13px] text-[var(--studio-faint)]">这份稿件还没有内容</div>;
+        return <div className="py-10 text-center text-body text-[var(--s-faint)]">这份稿件还没有内容</div>;
     }
 
     return (
-        <div className="divide-y divide-[var(--studio-line)]">
+        <div className="divide-y divide-[var(--hairline)]">
             {entries.map(([key, value]) => (
                 <section key={key} className="py-4 first:pt-0 last:pb-0">
-                    <h4 className="mb-2 text-[11px] font-semibold text-[var(--studio-muted)]">{fieldLabel(key)}</h4>
-                    <div className="text-[13px] leading-6 text-[var(--studio-ink)]">
+                    <h4 className="mb-2 text-caption font-semibold text-[var(--s-muted)]">{fieldLabel(key)}</h4>
+                    <div className="text-body leading-6 text-[var(--s-ink)]">
                         <Value value={value} />
                     </div>
                 </section>

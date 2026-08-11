@@ -1,15 +1,17 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { App, Button, Tag, Tooltip } from "antd";
 import { Check, FileText, Lock } from "lucide-react";
 
-import { ArtifactContentView } from "@/features/canvas/components/artifact-content-view";
 import { ArtifactEditorModal } from "@/features/canvas/components/artifact-editor-modal";
+import { StoryRenderer } from "@/features/canvas/story/renderers";
 import { artifactKindLabel, artifactStatusLabel } from "@/features/workspace/lib/labels";
+import { SCRATCH_DRAFT_KEY, useWorkspaceStore } from "@/features/workspace/stores/use-workspace-store";
 import type { Artifact } from "@/services/api";
 import { useApproveArtifactVersion, useLockArtifactVersion } from "@/services/queries";
+import { useIsAgentInline } from "@/shared/hooks/use-media-query";
 import { cn } from "@/shared/lib/utils";
+import { Button, Surface, Tag, Text, Tooltip, useApp } from "@/shared/ui";
 
 /**
  * 创作稿件列表与内容。
@@ -17,12 +19,27 @@ import { cn } from "@/shared/lib/utils";
  * 上半部分是同一作用域下的稿件切换器，下半部分渲染选中稿件的当前版本。
  */
 export function ArtifactPanel({ projectId, artifacts }: { projectId: string; artifacts: Artifact[] }) {
-    const { message } = App.useApp();
+    const { message } = useApp();
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [editorOpen, setEditorOpen] = useState(false);
 
     const approveVersion = useApproveArtifactVersion(projectId);
     const lockVersion = useLockArtifactVersion(projectId);
+    const setComposerDraft = useWorkspaceStore((state) => state.setComposerDraft);
+    const agentCollapsed = useWorkspaceStore((state) => state.agentCollapsed);
+    const toggleAgent = useWorkspaceStore((state) => state.toggleAgent);
+    const setAgentDrawer = useWorkspaceStore((state) => state.setAgentDrawer);
+    const agentInline = useIsAgentInline();
+
+    /** 块级改写：把该块预填进助手输入框并打开助手面板。 */
+    const rewriteBlock = (text: string) => {
+        setComposerDraft(SCRATCH_DRAFT_KEY, `改写这段：\n${text}`);
+        if (agentInline) {
+            if (agentCollapsed) toggleAgent();
+        } else {
+            setAgentDrawer(true);
+        }
+    };
 
     // 稿件列表变化后（切换单元、采纳提案）保持选中项有效。
     useEffect(() => {
@@ -50,18 +67,20 @@ export function ArtifactPanel({ projectId, artifacts }: { projectId: string; art
     };
 
     return (
-        <section className="rounded-lg border border-[var(--studio-line)] bg-[var(--studio-surface)] p-5">
+        <Surface as="section" level="panel" radius="md" hairline lift inset="4">
             <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
-                    <h2 className="text-[15px] font-semibold text-[var(--studio-ink)]">创作稿件</h2>
-                    <p className="mt-1 text-[11px] leading-5 text-[var(--studio-muted)]">
+                    <Text as="h2" variant="heading" tone="ink">
+                        创作稿件
+                    </Text>
+                    <Text as="p" variant="caption" tone="muted" className="mt-1 leading-5">
                         AI 或你保存的内容会出现在这里，每次修改都会保留历史版本。
-                    </p>
+                    </Text>
                 </div>
                 <Tag className="m-0">{artifacts.length} 份</Tag>
             </div>
 
-            <div className="mt-4 grid gap-2 sm:grid-cols-2">
+            <div className="hide-scrollbar mt-4 flex gap-2 overflow-x-auto pb-1">
                 {artifacts.map((artifact) => (
                     <button
                         key={artifact.id}
@@ -69,42 +88,52 @@ export function ArtifactPanel({ projectId, artifacts }: { projectId: string; art
                         onClick={() => setSelectedId(artifact.id)}
                         aria-pressed={selectedId === artifact.id}
                         className={cn(
-                            "rounded-md border p-3 text-left transition-colors",
+                            "relative min-w-44 rounded-[var(--r-sm)] border px-3 py-2.5 text-left transition-colors",
                             selectedId === artifact.id
-                                ? "border-[var(--studio-action-line)] bg-[var(--studio-action-soft)]"
-                                : "border-[var(--studio-line)] hover:border-[var(--studio-action-line)]",
+                                ? "border-[var(--hairline-strong)] bg-[var(--s-raised)]"
+                                : "border-[var(--hairline)] hover:bg-[var(--s-raised)]",
                         )}
                     >
+                        {selectedId === artifact.id ? (
+                            <span
+                                aria-hidden
+                                className="absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-[var(--s-action)]"
+                            />
+                        ) : null}
                         <div className="flex items-center gap-2">
-                            <FileText className="size-4 shrink-0 text-[var(--studio-action)]" />
-                            <span className="truncate text-[13px] font-medium text-[var(--studio-ink)]">{artifact.name}</span>
+                            <FileText className="size-4 shrink-0 text-[var(--s-faint)]" />
+                            <Text as="span" variant="body" tone="ink" weight={500} truncate>
+                                {artifact.name}
+                            </Text>
                         </div>
-                        <div className="mt-1 text-[11px] text-[var(--studio-faint)]">
+                        <Text variant="caption" tone="faint" className="mt-1 block">
                             {artifactKindLabel(artifact.kind)} · 第 {artifact.current_version?.version || 0} 版 ·{" "}
                             {artifactStatusLabel(artifact.current_version?.status)}
-                        </div>
+                        </Text>
                     </button>
                 ))}
             </div>
 
             {selected ? (
-                <div className="mt-4 border-t border-[var(--studio-line)] pt-4">
+                <div className="mt-4 border-t border-[var(--hairline)] pt-4">
                     <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                         <div className="min-w-0">
-                            <h3 className="truncate text-[13px] font-semibold text-[var(--studio-ink)]">{selected.name}</h3>
-                            <div className="mt-0.5 text-[11px] text-[var(--studio-faint)]">
+                            <Text as="h3" variant="body" tone="ink" weight={600} truncate>
+                                {selected.name}
+                            </Text>
+                            <Text variant="caption" tone="faint" className="mt-0.5 block">
                                 {artifactKindLabel(selected.kind)} · 第 {version?.version || 0} 版 ·{" "}
                                 {artifactStatusLabel(version?.status)}
-                            </div>
+                            </Text>
                         </div>
                         <div className="flex flex-wrap gap-2">
-                            <Button size="small" icon={<FileText className="size-3.5" />} onClick={() => setEditorOpen(true)}>
+                            <Button size="sm" icon={<FileText className="size-3.5" />} onClick={() => setEditorOpen(true)}>
                                 编辑源码
                             </Button>
                             <Tooltip title={locked ? "已定稿的版本不能再改状态" : undefined}>
                                 <span>
                                     <Button
-                                        size="small"
+                                        size="sm"
                                         disabled={locked}
                                         icon={<Check className="size-3.5" />}
                                         loading={approveVersion.isPending}
@@ -117,7 +146,7 @@ export function ArtifactPanel({ projectId, artifacts }: { projectId: string; art
                             <Tooltip title={locked ? "已定稿" : "定稿后内容不再变动"}>
                                 <span>
                                     <Button
-                                        size="small"
+                                        size="sm"
                                         disabled={locked}
                                         icon={<Lock className="size-3.5" />}
                                         loading={lockVersion.isPending}
@@ -129,7 +158,7 @@ export function ArtifactPanel({ projectId, artifacts }: { projectId: string; art
                             </Tooltip>
                         </div>
                     </div>
-                    <ArtifactContentView payload={version?.payload || {}} />
+                    <StoryRenderer kind={selected.kind} payload={version?.payload || {}} onRewrite={rewriteBlock} />
                 </div>
             ) : null}
 
@@ -139,6 +168,6 @@ export function ArtifactPanel({ projectId, artifacts }: { projectId: string; art
                 artifact={selected}
                 onClose={() => setEditorOpen(false)}
             />
-        </section>
+        </Surface>
     );
 }

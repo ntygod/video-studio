@@ -17,6 +17,7 @@ const ARTIFACT_KIND_LABELS: Record<string, string> = {
     generated: "AI 稿件",
     brief: "项目简介",
     project_bible: "设定集",
+    structure: "结构调整",
 };
 
 const ARTIFACT_STATUS_LABELS: Record<string, string> = {
@@ -72,8 +73,6 @@ const CAPABILITY_LABELS: Record<string, string> = {
 const JOB_TYPE_LABELS: Record<string, string> = {
     render: "渲染出片",
     llm: "文本生成",
-    workflow: "工作流",
-    workflow_node: "工作流节点",
     voice_synthesis: "配音合成",
     storyboard: "分镜/动效",
     edit: "智能剪辑",
@@ -91,6 +90,18 @@ const JOB_STATUS_LABELS: Record<string, { label: string; color: string }> = {
 
 /** 项目中不作为"创作稿件"展示的内部 artifact 类型。 */
 export const META_ARTIFACT_KINDS = ["brief", "project_bible"];
+
+/** 制作流程产物：可独立审阅版本，但不代表已经形成内容稿件。 */
+export const OPERATIONAL_ARTIFACT_KINDS = ["edit_plan", "timeline"];
+
+/** 是否属于可计入创作进度、结构完成度和生成上下文的真实内容稿件。 */
+export function isContentArtifactKind(kind: string): boolean {
+    return !META_ARTIFACT_KINDS.includes(kind) && !OPERATIONAL_ARTIFACT_KINDS.includes(kind);
+}
+
+export function hasContentArtifact(artifacts: ReadonlyArray<{ kind: string }>): boolean {
+    return artifacts.some((artifact) => isContentArtifactKind(artifact.kind));
+}
 
 export function artifactKindLabel(kind: string): string {
     return ARTIFACT_KIND_LABELS[kind] || "创作稿件";

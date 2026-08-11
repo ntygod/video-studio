@@ -3,13 +3,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import {
+    cancelTurn,
     createConversation,
     deleteConversation,
     getConversation,
     listConversations,
-    sendMessage,
+    revertTurn,
+    startTurn,
     type Conversation,
-    type ConversationMessage,
 } from "@/services/api";
 import { qk } from "@/services/queries/keys";
 
@@ -51,66 +52,48 @@ export function useDeleteConversation(projectId: string) {
     });
 }
 
-/** 本地占位消息的 id 前缀，用于在回包后剔除乐观条目。 */
-const OPTIMISTIC_PREFIX = "optimistic-";
-
-/** 判断一条消息是否为尚未落库的乐观占位。 */
-export function isOptimisticMessage(message: ConversationMessage): boolean {
-    return message.id.startsWith(OPTIMISTIC_PREFIX);
+/**
+ * 启动 Agent 回合：后端立即返回 turn_id，AI 在后台执行，事件走 SSE。
+ * 成功后会刷新对话列表（新消息已落库）。
+ */
+export function useStartTurn(projectId: string) {
+    const client = useQueryClient();
+    return useMutation({
+        mutationFn: ({
+            conversationId,
+            content,
+            contextRefs,
+            mode,
+        }: {
+            conversationId: string;
+            content: string;
+            contextRefs?: Array<Record<string, unknown>>;
+            mode?: string;
+        }) => startTurn(conversationId, { content, context_refs: contextRefs, mode }),
+        onSuccess: (_result, variables) => {
+            client.invalidateQueries({ queryKey: qk.conversationsRoot(projectId) });
+            client.invalidateQueries({ queryKey: qk.conversation(variables.conversationId) });
+        },
+    });
 }
 
-/**
- * 发送消息。
- * <p>
- * 先乐观追加用户消息让输入框立即清空，回包后用服务端的真实消息替换。
- * AI 若提出提案，需要同时作废项目详情与稿件缓存。
- *
- * 注意：后端当前是阻塞式的，一次调用可能等待很久。P1 换成 SSE 后本 hook 只保留为降级路径。
- */
-export function useSendMessage(projectId: string) {
-    const client = useQueryClient();
-
+/** 请求停止正在运行的回合。 */
+export function useCancelTurn() {
     return useMutation({
-        mutationFn: ({ conversationId, content }: { conversationId: string; content: string }) =>
-            sendMessage(conversationId, content),
+        mutationFn: (turnId: string) => cancelTurn(turnId),
+    });
+}
 
-        onMutate: async ({ conversationId, content }) => {
-            const key = qk.conversation(conversationId);
-            await client.cancelQueries({ queryKey: key });
-            const previous = client.getQueryData<Conversation>(key);
-
-            const optimistic: ConversationMessage = {
-                id: OPTIMISTIC_PREFIX + String(previous?.messages?.length ?? 0),
-                conversation_id: conversationId,
-                seq: (previous?.messages?.length || 0) + 1,
-                role: "user",
-                content,
-                proposal_ids: [],
-                created_at: Date.now() / 1000,
-            };
-
-            client.setQueryData<Conversation>(key, (current) =>
-                current ? { ...current, messages: [...(current.messages || []), optimistic] } : current,
-            );
-
-            return { previous, key };
-        },
-
-        onError: (_error, _variables, context) => {
-            if (context?.previous) client.setQueryData(context.key, context.previous);
-        },
-
-        onSuccess: (result, { conversationId }) => {
-            client.setQueryData<Conversation>(qk.conversation(conversationId), (current) => {
-                if (!current) return current;
-                const settled = (current.messages || []).filter((item) => !isOptimisticMessage(item));
-                return { ...current, messages: [...settled, result.user_message, result.assistant_message] };
-            });
-            client.invalidateQueries({ queryKey: qk.conversationsRoot(projectId) });
-            if (result.proposals.length) {
-                client.invalidateQueries({ queryKey: qk.project(projectId) });
-                client.invalidateQueries({ queryKey: qk.artifactsRoot(projectId) });
-            }
+/** 撤销本回合直接创建的实体。 */
+export function useRevertTurn(projectId: string) {
+    const client = useQueryClient();
+    return useMutation({
+        mutationFn: (turnId: string) => revertTurn(turnId),
+        onSuccess: () => {
+            client.invalidateQueries({ queryKey: qk.project(projectId) });
+            client.invalidateQueries({ queryKey: qk.unitsRoot(projectId) });
+            client.invalidateQueries({ queryKey: qk.artifactsRoot(projectId) });
+            client.invalidateQueries({ queryKey: qk.assetsRoot(projectId) });
         },
     });
 }

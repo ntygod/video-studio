@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { App, Input, Modal } from "antd";
 
 import type { Artifact } from "@/services/api";
 import { useAddArtifactVersion } from "@/services/queries";
 import { jsonText } from "@/shared/lib/format";
+import { Modal, Textarea, useApp } from "@/shared/ui";
 
 /**
  * 稿件的结构化编辑器。
@@ -24,7 +24,7 @@ export function ArtifactEditorModal({
     artifact: Artifact | null;
     onClose: () => void;
 }) {
-    const { message } = App.useApp();
+    const { message } = useApp();
     const [draft, setDraft] = useState("{}");
     const addVersion = useAddArtifactVersion(projectId);
 
@@ -62,15 +62,15 @@ export function ArtifactEditorModal({
             confirmLoading={addVersion.isPending}
             width={780}
         >
-            <p className="mb-3 text-[11px] leading-5 text-[var(--studio-muted)]">
+            <p className="mb-3 text-caption leading-5 text-[var(--s-muted)]">
                 这里编辑的是稿件的结构化内容。保存会追加一个新版本，历史版本不会被覆盖。
             </p>
-            <Input.TextArea
+            <Textarea
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
                 autoSize={{ minRows: 18, maxRows: 32 }}
                 spellCheck={false}
-                className="font-mono !text-[12px]"
+                className="font-mono !text-label"
             />
         </Modal>
     );

@@ -23,10 +23,23 @@ class AssetCreate(BaseModel):
 
 
 @router.get("/api/projects/{project_id}/assets")
-def list_assets(project_id: str, request: Request, unit_id: str | None = None):
+def list_assets(
+    project_id: str,
+    request: Request,
+    unit_id: str | None = None,
+    kind: str | None = None,
+    limit: int = 50,
+    cursor: str | None = None,
+):
     with UnitOfWork(request.app.state.database) as uow:
         uow.projects.get(project_id)
-        return uow.assets.list(project_id, unit_id=unit_id)
+        return uow.assets.list_page(
+            project_id,
+            unit_id=unit_id,
+            kind=kind,
+            limit=limit,
+            cursor=cursor,
+        )
 
 
 @router.post("/api/projects/{project_id}/assets", status_code=201)
@@ -81,6 +94,21 @@ def upload_asset(
 def get_asset(asset_id: str, request: Request):
     with UnitOfWork(request.app.state.database) as uow:
         return uow.assets.get(asset_id)
+
+
+@router.patch("/api/assets/{asset_id}")
+def patch_asset(asset_id: str, patch: dict[str, Any], request: Request):
+    unit_id = patch.get("unit_id")
+    shot_id = patch.get("shot_id")
+    with UnitOfWork(request.app.state.database) as uow:
+        uow.assets.get(asset_id)
+        if unit_id:
+            unit = uow.units.get(unit_id)
+            if unit.project_id != uow.assets.get(asset_id)["project_id"]:
+                from app.store.repositories import NotFoundError
+
+                raise NotFoundError(unit_id)
+        return uow.assets.update_scope(asset_id, unit_id=unit_id, shot_id=shot_id)
 
 
 @router.delete("/api/assets/{asset_id}")

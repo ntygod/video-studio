@@ -1,23 +1,23 @@
 "use client";
 
 import { useEffect, type ReactNode } from "react";
-import { Drawer, Spin } from "antd";
 
 import { AgentPanel } from "@/features/agent/components/agent-panel";
+import { AppSidebar } from "@/features/app-shell/components/app-sidebar";
+import { CommandPalette } from "@/features/command-palette/command-palette";
 import { JobDock } from "@/features/jobs/components/job-dock";
 import { StructurePanel } from "@/features/structure/components/structure-panel";
 import { WorkspaceTopbar } from "@/features/workspace/components/workspace-topbar";
 import { useWorkspaceData } from "@/features/workspace/hooks/use-workspace-data";
 import { useWorkspaceStore } from "@/features/workspace/stores/use-workspace-store";
 import { useIsAgentInline, useIsStructureInline } from "@/shared/hooks/use-media-query";
+import { Drawer, Spin } from "@/shared/ui";
 import { ErrorPanel, PanelErrorBoundary } from "@/shared/ui/error-panel";
 import { PanelResizer } from "@/shared/ui/panel-resizer";
 
 /**
- * 工作台三栏骨架。
- * <p>
- * 结构区 · 画布 · Agent 区，底部常驻任务坞。左右两栏可拖拽调宽、可折叠，
- * 宽度与折叠状态持久化。工作台内不再挂全局导航栏——项目内的横向空间应该全部给创作。
+ * 自适应创作工作台：全局导航、项目结构、创作画布与 Agent 始终共享同一套信息架构。
+ * 桌面固定三栏，平板保留结构栏，手机与窄屏通过抽屉访问两侧面板。
  */
 export function WorkspaceShell({ children }: { children: ReactNode }) {
     const { project, isLoading, error } = useWorkspaceData();
@@ -36,7 +36,6 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
     const structureInline = useIsStructureInline();
     const agentInline = useIsAgentInline();
 
-    // 面板宽度与折叠状态存在 localStorage，挂载后才注水，避免与 SSR 首帧不一致。
     useEffect(() => {
         void useWorkspaceStore.persist.rehydrate();
     }, []);
@@ -57,16 +56,7 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
         };
         window.addEventListener("keydown", onKeyDown);
         return () => window.removeEventListener("keydown", onKeyDown);
-    }, [
-        agentDrawerOpen,
-        agentInline,
-        setAgentDrawer,
-        setStructureDrawer,
-        structureDrawerOpen,
-        structureInline,
-        toggleAgent,
-        toggleStructure,
-    ]);
+    }, [agentDrawerOpen, agentInline, setAgentDrawer, setStructureDrawer, structureDrawerOpen, structureInline, toggleAgent, toggleStructure]);
 
     if (error) {
         return (
@@ -92,85 +82,64 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
         );
     }
 
+    const renderThreeColumns = () => (
+        <div className="flex min-h-0 flex-1">
+            {!structureCollapsed ? (
+                <>
+                    <aside className="panel-transition hidden shrink-0 overflow-hidden md:block" style={{ width: panelSizes.structure }} aria-label="项目结构">
+                        <PanelErrorBoundary title="结构面板出错了">
+                            <StructurePanel />
+                        </PanelErrorBoundary>
+                    </aside>
+                    <div className="hidden md:block">
+                        <PanelResizer side="left" width={panelSizes.structure} onResize={(width) => setPanelSize("structure", width)} label="调整结构面板宽度" />
+                    </div>
+                </>
+            ) : null}
+
+            <main className="hide-scrollbar min-w-0 flex-1 overflow-y-auto bg-[var(--s-base)]">
+                <PanelErrorBoundary title="这个视图出错了">{children}</PanelErrorBoundary>
+            </main>
+
+            {!agentCollapsed ? (
+                <>
+                    <div className="hidden xl:block">
+                        <PanelResizer side="right" width={panelSizes.agent} onResize={(width) => setPanelSize("agent", width)} label="调整助手面板宽度" />
+                    </div>
+                    <aside className="panel-transition hidden shrink-0 overflow-hidden xl:block" style={{ width: panelSizes.agent }} aria-label="AI 创作助手">
+                        <PanelErrorBoundary title="助手面板出错了">
+                            <AgentPanel onCollapse={toggleAgent} />
+                        </PanelErrorBoundary>
+                    </aside>
+                </>
+            ) : null}
+        </div>
+    );
+
     return (
-        <div className="flex h-dvh flex-col overflow-hidden bg-[var(--studio-bg)]">
-            <WorkspaceTopbar />
-
-            <div className="flex min-h-0 flex-1">
-                {!structureCollapsed ? (
-                    <>
-                        <aside
-                            className="hidden shrink-0 lg:block"
-                            style={{ width: panelSizes.structure }}
-                            aria-label="项目结构"
-                        >
-                            <PanelErrorBoundary title="结构面板出错了">
-                                <StructurePanel />
-                            </PanelErrorBoundary>
-                        </aside>
-                        <div className="hidden lg:block">
-                            <PanelResizer
-                                side="left"
-                                width={panelSizes.structure}
-                                onResize={(width) => setPanelSize("structure", width)}
-                                label="调整结构面板宽度"
-                            />
-                        </div>
-                    </>
-                ) : null}
-
-                <main className="hide-scrollbar min-w-0 flex-1 overflow-y-auto bg-[var(--studio-bg)]">
-                    <PanelErrorBoundary title="这个视图出错了">{children}</PanelErrorBoundary>
-                </main>
-
-                {!agentCollapsed ? (
-                    <>
-                        <div className="hidden xl:block">
-                            <PanelResizer
-                                side="right"
-                                width={panelSizes.agent}
-                                onResize={(width) => setPanelSize("agent", width)}
-                                label="调整助手面板宽度"
-                            />
-                        </div>
-                        <aside
-                            className="hidden shrink-0 xl:block"
-                            style={{ width: panelSizes.agent }}
-                            aria-label="AI 创作助手"
-                        >
-                            <PanelErrorBoundary title="助手面板出错了">
-                                <AgentPanel onCollapse={toggleAgent} />
-                            </PanelErrorBoundary>
-                        </aside>
-                    </>
-                ) : null}
+        <div className="flex h-dvh overflow-hidden bg-[var(--s-base)]">
+            <div className="hidden md:block">
+                <AppSidebar />
             </div>
 
-            <PanelErrorBoundary title="任务坞出错了">
-                <JobDock />
-            </PanelErrorBoundary>
+            <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+                <WorkspaceTopbar />
+                {renderThreeColumns()}
 
-            <Drawer
-                title="项目结构"
-                placement="left"
-                width={300}
-                open={!structureInline && structureDrawerOpen}
-                onClose={() => setStructureDrawer(false)}
-                styles={{ body: { padding: 0 } }}
-            >
+                <PanelErrorBoundary title="任务坞出错了">
+                    <JobDock />
+                </PanelErrorBoundary>
+            </div>
+
+            <CommandPalette />
+
+            <Drawer title="项目结构" placement="left" size={300} open={!structureInline && structureDrawerOpen} onClose={() => setStructureDrawer(false)} styles={{ body: { padding: 0 } }}>
                 <PanelErrorBoundary title="结构面板出错了">
                     <StructurePanel />
                 </PanelErrorBoundary>
             </Drawer>
 
-            <Drawer
-                title="AI 创作助手"
-                placement="right"
-                width={420}
-                open={!agentInline && agentDrawerOpen}
-                onClose={() => setAgentDrawer(false)}
-                styles={{ body: { padding: 0 } }}
-            >
+            <Drawer title="AI 创作助手" placement="right" size={420} open={!agentInline && agentDrawerOpen} onClose={() => setAgentDrawer(false)} styles={{ body: { padding: 0 } }}>
                 <PanelErrorBoundary title="助手面板出错了">
                     <AgentPanel />
                 </PanelErrorBoundary>

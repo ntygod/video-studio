@@ -19,16 +19,6 @@ class JobEvent(DomainModel):
     created_at: float
 
 
-class NodeRun(DomainModel):
-    id: str
-    job_id: str
-    node_key: str
-    status: JobStatus = JobStatus.QUEUED
-    input_hash: str = ""
-    output_refs: list[str] = Field(default_factory=list)
-    error: str = ""
-
-
 class PersistentJob(DomainModel):
     id: str
     project_id: str

@@ -1,14 +1,17 @@
 "use client";
 
-import { App, Button, Tooltip } from "antd";
-import { Check, Play, Sparkles } from "lucide-react";
+import { Check, ExternalLink, Film, Play, Settings2, Sparkles } from "lucide-react";
 import Link from "next/link";
 
 import { useWorkspaceData } from "@/features/workspace/hooks/use-workspace-data";
+import { jobTypeLabel } from "@/features/workspace/lib/labels";
 import { useWorkspaceRoute } from "@/features/workspace/hooks/use-workspace-route";
 import { useWorkspaceStore } from "@/features/workspace/stores/use-workspace-store";
-import { useCompileTimeline, useHasLlm, useRenderTimeline, useStartGeneration } from "@/services/queries";
+import { isJobActive, mediaUrl } from "@/services/api";
+import { useCompileTimeline, useHasLlm, useJobs, useRenderTimeline, useStartGeneration } from "@/services/queries";
+import { progressPercent } from "@/shared/lib/format";
 import { cn } from "@/shared/lib/utils";
+import { Button, Progress, Surface, Tag, Text, Tooltip, useApp } from "@/shared/ui";
 
 /** 让 AI 产出剪辑方案的指令。要求只引用上下文里真实存在的素材 id，避免虚构。 */
 const EDIT_PLAN_PROMPT =
@@ -20,13 +23,13 @@ function ChecklistItem({ done, label, value }: { done: boolean; label: string; v
     return (
         <div
             className={cn(
-                "flex items-center gap-2 rounded-md border px-3 py-2 text-[11px]",
+                "flex items-center gap-2 rounded-[var(--r-sm)] border px-3 py-2 text-caption",
                 done
-                    ? "border-[var(--studio-action-line)] text-[var(--studio-ink)]"
-                    : "border-[var(--studio-line)] text-[var(--studio-faint)]",
+                    ? "border-[var(--hairline-strong)] text-[var(--s-ink)]"
+                    : "border-[var(--hairline)] text-[var(--s-faint)]",
             )}
         >
-            {done ? <Check className="size-3.5 shrink-0 text-[var(--studio-action)]" /> : <span className="size-3.5 shrink-0" />}
+            {done ? <Check className="size-3.5 shrink-0 text-[var(--s-ink)]" /> : <span className="size-3.5 shrink-0" />}
             <span className="font-medium">{label}</span>
             <span className="ml-auto">{value}</span>
         </div>
@@ -40,9 +43,9 @@ function ChecklistItem({ done, label, value }: { done: boolean; label: string; v
  * P4 会在这里换成真正的时间线轨道与播放器。
  */
 export function ProduceView() {
-    const { message } = App.useApp();
+    const { message } = useApp();
     const { projectId, selectedUnitId } = useWorkspaceRoute();
-    const { project, assets, hasEditPlan, contentArtifacts, hrefForMedia } = useProduceContext();
+    const { project, units, assets, hasEditPlan, contentArtifacts, hrefForMedia } = useProduceContext();
     const hasLlm = useHasLlm();
     const toggleDock = useWorkspaceStore((state) => state.toggleDock);
     const dockExpanded = useWorkspaceStore((state) => state.dockExpanded);
@@ -50,9 +53,16 @@ export function ProduceView() {
     const startGeneration = useStartGeneration(projectId);
     const compileTimeline = useCompileTimeline(projectId);
     const renderTimeline = useRenderTimeline(projectId);
+    const jobsQuery = useJobs(projectId);
 
     const renderReady = assets.length > 0 && hasEditPlan;
     const busy = startGeneration.isPending || compileTimeline.isPending || renderTimeline.isPending;
+    const activeRenderJob = (jobsQuery.data || []).find(
+        (job) => job.job_type.includes("render") && isJobActive(job),
+    );
+    const latestRender = [...assets]
+        .filter((asset) => asset.kind === "render")
+        .sort((a, b) => b.created_at - a.created_at)[0];
 
     /** 提交任务后把任务坞展开，让用户看到进度而不是只弹个 toast。 */
     const revealDock = () => {
@@ -74,7 +84,7 @@ export function ProduceView() {
                 prompt: EDIT_PLAN_PROMPT,
                 context: {
                     brief: project.brief,
-                    units: project.units,
+                    units,
                     assets: assets.map((asset) => ({
                         id: asset.id,
                         kind: asset.kind,
@@ -112,47 +122,138 @@ export function ProduceView() {
     };
 
     return (
-        <div className="mx-auto w-full max-w-[900px] px-5 py-6 md:px-7">
-            <section className="rounded-lg border border-[var(--studio-line)] bg-[var(--studio-surface)] p-5">
-                <h1 className="text-[15px] font-semibold text-[var(--studio-ink)]">生成成片</h1>
-                <p className="mt-1 text-[11px] leading-5 text-[var(--studio-muted)]">
-                    先让 AI 根据内容和素材生成制作方案，准备好后即可编译时间线并渲染成片。
-                </p>
-
-                <div className="mt-4 grid gap-2 sm:grid-cols-2">
-                    <ChecklistItem done={assets.length > 0} label="素材" value={assets.length > 0 ? `${assets.length} 份` : "未准备"} />
-                    <ChecklistItem done={hasEditPlan} label="制作方案" value={hasEditPlan ? "已准备" : "未准备"} />
+        <div className="mx-auto w-full max-w-[1120px] px-5 py-6 md:px-7">
+            <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+                <div>
+                    <Text as="h1" variant="heading" tone="ink">
+                        交付室
+                    </Text>
+                    <Text as="p" variant="caption" tone="muted" className="mt-1 leading-5">
+                        检查制作条件，生成剪辑方案，编译时间线并渲染最终产物。
+                    </Text>
                 </div>
+                <Tooltip title={renderReady ? "编译时间线并渲染" : "需要素材和制作方案"}>
+                    <span>
+                        <Button
+                            variant="primary"
+                            disabled={!renderReady || busy}
+                            icon={<Play className="size-4" />}
+                            loading={compileTimeline.isPending || renderTimeline.isPending}
+                            onClick={() => void produce()}
+                        >
+                            开始渲染
+                        </Button>
+                    </span>
+                </Tooltip>
+            </div>
 
-                <div className="mt-4 flex flex-wrap gap-2">
-                    <Button
-                        type="primary"
-                        disabled={!hasLlm || assets.length === 0}
-                        icon={<Sparkles className="size-4" />}
-                        loading={startGeneration.isPending}
-                        onClick={() => void generatePlan()}
-                    >
-                        生成制作方案
-                    </Button>
-                    <Tooltip title={renderReady ? "编译时间线并渲染" : "需要素材和制作方案"}>
-                        <span>
+            <div className="grid gap-4 lg:grid-cols-[minmax(280px,0.85fr)_minmax(0,1.15fr)]">
+                <Surface
+                    as="section"
+                    level="canvas"
+                    radius="md"
+                    className="relative min-h-[420px] overflow-hidden border border-[var(--hairline)]"
+                >
+                    {latestRender && latestRender.mime_type.startsWith("video/") ? (
+                        <video src={mediaUrl(latestRender.uri)} controls className="absolute inset-0 h-full w-full object-cover" />
+                    ) : latestRender && latestRender.mime_type.startsWith("image/") ? (
+                        <img src={mediaUrl(latestRender.uri)} alt={latestRender.name} className="absolute inset-0 h-full w-full object-cover" />
+                    ) : (
+                        <>
+                            <div className="studio-project-cover absolute inset-0 opacity-90" data-tone="3" />
+                            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent p-5 pt-20 text-white">
+                                <Text as="div" variant="title" className="!text-white">
+                                    {project?.title || "项目成片"}
+                                </Text>
+                                <Text as="div" variant="caption" className="mt-1 !text-white/80">
+                                    {project?.brief.concept || "完成制作检查后即可生成预览"}
+                                </Text>
+                            </div>
+                        </>
+                    )}
+                    <span className="absolute right-3 top-3 rounded-full bg-black/45 px-2.5 py-1 text-caption text-white backdrop-blur-md">
+                        9:16 · 项目预览
+                    </span>
+                </Surface>
+
+                <div className="space-y-4">
+                    <Surface as="section" level="panel" radius="md" hairline lift inset="4">
+                        <div className="flex items-center gap-2">
+                            <Text as="h2" variant="heading" tone="ink" className="min-w-0 flex-1">
+                                制作检查
+                            </Text>
+                            <Tag color={renderReady ? "green" : "orange"} className="m-0">
+                                {renderReady ? "可以渲染" : "仍需准备"}
+                            </Tag>
+                        </div>
+
+                        <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                            <ChecklistItem done={hasLlm} label="创作模型" value={hasLlm ? "已连接" : "未配置"} />
+                            <ChecklistItem done={assets.length > 0} label="项目素材" value={assets.length > 0 ? `${assets.length} 份` : "未准备"} />
+                            <ChecklistItem done={hasEditPlan} label="剪辑方案" value={hasEditPlan ? "已准备" : "未准备"} />
+                            <ChecklistItem done={Boolean(latestRender)} label="最近成片" value={latestRender ? "已有产物" : "尚未渲染"} />
+                        </div>
+
+                        <div className="mt-4 flex flex-wrap gap-2 border-t border-[var(--hairline)] pt-4">
                             <Button
-                                disabled={!renderReady || busy}
-                                icon={<Play className="size-4" />}
-                                loading={compileTimeline.isPending || renderTimeline.isPending}
-                                onClick={() => void produce()}
+                                disabled={!hasLlm || assets.length === 0}
+                                icon={<Sparkles className="size-4" />}
+                                loading={startGeneration.isPending}
+                                onClick={() => void generatePlan()}
                             >
-                                生成成片
+                                {hasEditPlan ? "重新生成剪辑方案" : "生成剪辑方案"}
                             </Button>
-                        </span>
-                    </Tooltip>
-                    {assets.length === 0 ? (
-                        <Link href={hrefForMedia}>
-                            <Button type="link">先添加素材</Button>
-                        </Link>
+                            <Button disabled icon={<Settings2 className="size-4" />}>交付设置</Button>
+                            {assets.length === 0 ? (
+                                <Link href={hrefForMedia}>
+                                    <Button variant="ghost">先添加素材</Button>
+                                </Link>
+                            ) : null}
+                        </div>
+                    </Surface>
+
+                    {activeRenderJob ? (
+                        <Surface as="section" level="raised" radius="md" inset="3" className="border border-[var(--s-action-line)]">
+                            <div className="flex items-center gap-2">
+                                <span className="size-1.5 animate-pulse rounded-full bg-[var(--s-action)]" />
+                                <Text variant="label" tone="ink" weight={500} className="min-w-0 flex-1">
+                                    {jobTypeLabel(activeRenderJob.job_type)}
+                                </Text>
+                                <Text variant="mono" tone="ink">
+                                    {progressPercent(activeRenderJob.progress)}%
+                                </Text>
+                            </div>
+                            <Progress value={progressPercent(activeRenderJob.progress) / 100} className="mt-2" />
+                            <Text variant="caption" tone="faint" className="mt-2 block">
+                                渲染任务已进入持久化队列，可在底部任务坞或任务中心继续查看。
+                            </Text>
+                        </Surface>
+                    ) : null}
+
+                    {latestRender ? (
+                        <Surface as="section" level="panel" radius="md" hairline inset="3">
+                            <div className="flex items-center gap-3">
+                                <span className="flex size-9 shrink-0 items-center justify-center rounded-[var(--r-sm)] bg-[var(--s-raised)] text-[var(--s-muted)]">
+                                    <Film className="size-4" />
+                                </span>
+                                <div className="min-w-0 flex-1">
+                                    <Text variant="label" tone="ink" weight={500} truncate className="block">
+                                        {latestRender.name || "项目成片"}
+                                    </Text>
+                                    <Text variant="caption" tone="faint" className="mt-0.5 block">
+                                        最近一次渲染产物
+                                    </Text>
+                                </div>
+                                <a href={mediaUrl(latestRender.uri)} target="_blank" rel="noreferrer">
+                                    <Button size="sm" icon={<ExternalLink className="size-3.5" />}>
+                                        打开
+                                    </Button>
+                                </a>
+                            </div>
+                        </Surface>
                     ) : null}
                 </div>
-            </section>
+            </div>
         </div>
     );
 }

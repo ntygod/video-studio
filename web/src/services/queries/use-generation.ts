@@ -2,7 +2,14 @@
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
-import { compileTimeline, renderTimeline, startGeneration, type GenerateInput } from "@/services/api";
+import {
+    compileTimeline,
+    generateBatch,
+    renderTimeline,
+    startGeneration,
+    type BatchGenerateInput,
+    type GenerateInput,
+} from "@/services/api";
 import { qk } from "@/services/queries/keys";
 
 /** 生成类任务提交后统一作废任务列表，让任务坞立刻显示新任务。 */
@@ -18,6 +25,14 @@ export function useStartGeneration(projectId: string) {
     const afterSubmit = useAfterJobSubmit(projectId);
     return useMutation({
         mutationFn: (input: GenerateInput) => startGeneration(projectId, input),
+        onSuccess: afterSubmit,
+    });
+}
+
+export function useGenerateBatch(projectId: string) {
+    const afterSubmit = useAfterJobSubmit(projectId);
+    return useMutation({
+        mutationFn: (input: BatchGenerateInput) => generateBatch(projectId, input),
         onSuccess: afterSubmit,
     });
 }

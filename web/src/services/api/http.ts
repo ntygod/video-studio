@@ -1,7 +1,7 @@
 "use client";
 
 /** 后端基地址，去掉尾部斜杠以便直接拼接路径。 */
-const API_BASE = (process.env.NEXT_PUBLIC_SERVER_URL || "").replace(/\/+$/, "");
+export const API_BASE = (process.env.NEXT_PUBLIC_SERVER_URL || "").replace(/\/+$/, "");
 
 /** 是否输出请求日志，由 NEXT_PUBLIC_API_DEBUG 控制。 */
 const DEBUG = process.env.NEXT_PUBLIC_API_DEBUG === "1";
@@ -129,18 +129,13 @@ export function seg(value: string): string {
 /** 后端媒体路由的挂载点，见 app/api/routes/media.py。 */
 const MEDIA_PREFIX = "/media/";
 
-/** 素材在磁盘上的根目录片段，用于从绝对路径里截出可访问的相对地址。 */
-const MEDIA_ROOT_MARKER = "/data/media/";
-
 /**
- * 把素材 uri 转成浏览器可直接访问的地址。
+ * 把素材相对 uri 转成浏览器可直接访问的地址。
  * <p>
- * 后端 MediaStore.write_bytes 返回的是**绝对文件系统路径**（例如
- * `D:/WorkSpace/.../data/media/<project>/<file>.png`），并被原样写进 asset.uri。
- * 浏览器无法加载这种地址，所以这里截出 data/media 之后的部分，映射到 /media 路由。
- * 后端把 uri 改成相对路径后，这里的兼容分支可以删掉。
+ * 后端 asset.uri 现在存相对路径（"<project_id>/<unit_id>/<file>"），
+ * P0 的绝对路径截断兼容分支已删除（T2.4）。
  *
- * @param uri string 素材 uri，可能是绝对路径、相对路径或完整 URL
+ * @param uri string 素材 uri，相对路径或完整 URL
  * @return string 可用于 img/video/audio src 的地址
  */
 export function mediaUrl(uri: string): string {
@@ -150,9 +145,5 @@ export function mediaUrl(uri: string): string {
     const normalized = uri.replace(/\\/g, "/");
     if (normalized.startsWith(MEDIA_PREFIX)) return API_BASE + normalized;
 
-    const markerAt = normalized.indexOf(MEDIA_ROOT_MARKER);
-    const relative =
-        markerAt >= 0 ? normalized.slice(markerAt + MEDIA_ROOT_MARKER.length) : normalized.replace(/^\/+/, "");
-
-    return API_BASE + MEDIA_PREFIX + relative;
+    return API_BASE + MEDIA_PREFIX + normalized.replace(/^\/+/, "");
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { del, get, patch, post, seg } from "./http";
-import type { CreativeUnit, OkResult, Project, ProjectDetail } from "./types";
+import type { CreativeUnit, OkResult, Page, Project, ProjectDetail, ProjectSummary, SearchHit } from "./types";
 
 /** 创建项目的入参。project_type / workflow_id / format_id 均为开放文本。 */
 export type ProjectCreateInput = {
@@ -14,7 +14,7 @@ export type ProjectCreateInput = {
 };
 
 export function listProjects() {
-    return get<Project[]>("/api/projects");
+    return get<Array<Project & Partial<ProjectSummary>>>("/api/projects");
 }
 
 export function getProject(id: string) {
@@ -48,8 +48,28 @@ export function deleteProject(id: string) {
 
 export type UnitInput = Partial<CreativeUnit> & { title: string };
 
-export function listUnits(projectId: string, parentId?: string) {
-    return get<CreativeUnit[]>(`/api/projects/${seg(projectId)}/units`, { parent_id: parentId });
+export function listUnitsPage(
+    projectId: string,
+    params: { parent_id?: string | null; depth?: number; limit?: number; cursor?: string | null } = {},
+) {
+    return get<Page<CreativeUnit>>(`/api/projects/${seg(projectId)}/units`, params);
+}
+
+/** 拉取指定父级下的全部子单元（分页行走）。 */
+export async function listUnits(projectId: string, parentId?: string): Promise<CreativeUnit[]> {
+    const items: CreativeUnit[] = [];
+    let cursor: string | null = null;
+    do {
+        const page = await listUnitsPage(projectId, { parent_id: parentId, limit: 200, cursor });
+        items.push(...page.items);
+        cursor = page.next_cursor;
+    } while (cursor);
+    return items;
+}
+
+/** FTS 全文检索（T3.2）。 */
+export function searchProject(projectId: string, query: string, type = "all", limit = 20) {
+    return get<SearchHit[]>(`/api/projects/${seg(projectId)}/search`, { q: query, type, limit });
 }
 
 export function createUnits(projectId: string, units: UnitInput[]) {

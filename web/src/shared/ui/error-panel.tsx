@@ -1,8 +1,11 @@
 "use client";
 
 import { Component, type ErrorInfo, type ReactNode } from "react";
-import { Button } from "antd";
 import { RotateCw, TriangleAlert } from "lucide-react";
+
+import { Button } from "@/shared/ui/button";
+import { Stack } from "@/shared/ui/stack";
+import { Text } from "@/shared/ui/text";
 
 /**
  * 面板级错误提示。
@@ -13,16 +16,22 @@ import { RotateCw, TriangleAlert } from "lucide-react";
  */
 export function ErrorPanel({ title, message, onRetry }: { title: string; message?: string; onRetry?: () => void }) {
     return (
-        <div className="flex h-full min-h-[200px] flex-col items-center justify-center px-6 text-center">
-            <TriangleAlert className="size-6 text-[var(--studio-danger)]" />
-            <div className="mt-3 text-sm font-medium text-[var(--studio-ink)]">{title}</div>
-            {message ? <p className="mt-1.5 max-w-md text-xs leading-5 text-[var(--studio-muted)]">{message}</p> : null}
+        <Stack dir="col" align="center" justify="center" gap="3" className="h-full min-h-[200px] px-6 text-center">
+            <TriangleAlert className="size-6 text-[var(--s-danger)]" />
+            <Text as="div" variant="heading" tone="ink">
+                {title}
+            </Text>
+            {message ? (
+                <Text as="p" variant="body" tone="muted" className="max-w-md">
+                    {message}
+                </Text>
+            ) : null}
             {onRetry ? (
-                <Button className="mt-4" size="small" icon={<RotateCw className="size-3.5" />} onClick={onRetry}>
+                <Button className="mt-2" variant="secondary" size="sm" icon={<RotateCw className="size-3.5" />} onClick={onRetry}>
                     重试
                 </Button>
             ) : null}
-        </div>
+        </Stack>
     );
 }
 

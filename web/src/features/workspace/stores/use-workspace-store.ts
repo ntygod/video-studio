@@ -3,24 +3,12 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
-/** 画布视图。P0 只搬运现有功能；board / timeline / versions 分别在 P2 / P4 加入。 */
-export type CanvasView = "story" | "media" | "produce" | "brief";
-
-/** 合法视图集合，用于校验来自 URL 的值。 */
-export const CANVAS_VIEWS: readonly CanvasView[] = ["story", "media", "produce", "brief"] as const;
-
-/** 默认视图。 */
-export const DEFAULT_CANVAS_VIEW: CanvasView = "story";
-
 /**
- * 把任意字符串收敛为合法视图。
- *
- * @param value string | undefined | null 来自路由的原始值
- * @return CanvasView 合法视图，非法时回落到默认视图
+ * 画布视图常量与工具已迁到 lib/canvas-views.ts（无 "use client"），
+ * 这里再导出以保持既有引用兼容。
  */
-export function normalizeCanvasView(value: string | undefined | null): CanvasView {
-    return CANVAS_VIEWS.includes(value as CanvasView) ? (value as CanvasView) : DEFAULT_CANVAS_VIEW;
-}
+export { CANVAS_VIEWS, DEFAULT_CANVAS_VIEW, normalizeCanvasView } from "@/features/workspace/lib/canvas-views";
+export type { CanvasView } from "@/features/workspace/lib/canvas-views";
 
 type PanelSizes = {
     /** 结构区宽度（px）。 */
@@ -29,12 +17,12 @@ type PanelSizes = {
     agent: number;
 };
 
-const DEFAULT_PANEL_SIZES: PanelSizes = { structure: 260, agent: 400 };
+const DEFAULT_PANEL_SIZES: PanelSizes = { structure: 224, agent: 360 };
 
 /** 面板宽度的允许区间，拖拽与恢复时都会夹取。 */
 const PANEL_LIMITS = {
-    structure: { min: 200, max: 420 },
-    agent: { min: 320, max: 640 },
+    structure: { min: 200, max: 360 },
+    agent: { min: 320, max: 520 },
 } as const;
 
 function clamp(value: number, min: number, max: number): number {
@@ -56,6 +44,12 @@ type WorkspaceStore = {
     panelSizes: PanelSizes;
     /** 按会话保存的输入框草稿，key 为 conversationId，切换对话时不丢内容。 */
     composerDrafts: Record<string, string>;
+    /** 结构面板多选后交给 Agent 的待注入上下文（由 Agent 面板挂载时取走）。 */
+    pendingContextRefs: Array<{ type: string; id: string; label: string }>;
+    /** ⌘K 命令面板是否打开。 */
+    commandPaletteOpen: boolean;
+    /** 请求新建创作单元的计数（StructurePanel 监听后打开弹窗）。 */
+    unitCreateRequested: number;
 
     toggleStructure: () => void;
     toggleAgent: () => void;
@@ -65,6 +59,10 @@ type WorkspaceStore = {
     setPanelSize: (panel: keyof PanelSizes, width: number) => void;
     setComposerDraft: (conversationId: string, draft: string) => void;
     clearComposerDraft: (conversationId: string) => void;
+    pushContextRefs: (refs: Array<{ type: string; id: string; label: string }>) => void;
+    drainContextRefs: () => Array<{ type: string; id: string; label: string }>;
+    setCommandPalette: (open: boolean) => void;
+    requestUnitCreate: () => void;
 };
 
 /**
@@ -86,6 +84,9 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
             dockExpanded: false,
             panelSizes: DEFAULT_PANEL_SIZES,
             composerDrafts: {},
+            pendingContextRefs: [],
+            commandPaletteOpen: false,
+            unitCreateRequested: 0,
 
             toggleStructure: () => set((state) => ({ structureCollapsed: !state.structureCollapsed })),
             toggleAgent: () => set((state) => ({ agentCollapsed: !state.agentCollapsed })),
@@ -101,8 +102,7 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
                     },
                 })),
 
-            setComposerDraft: (conversationId, draft) =>
-                set((state) => ({ composerDrafts: { ...state.composerDrafts, [conversationId]: draft } })),
+            setComposerDraft: (conversationId, draft) => set((state) => ({ composerDrafts: { ...state.composerDrafts, [conversationId]: draft } })),
 
             clearComposerDraft: (conversationId) =>
                 set((state) => {
@@ -110,6 +110,23 @@ export const useWorkspaceStore = create<WorkspaceStore>()(
                     delete next[conversationId];
                     return { composerDrafts: next };
                 }),
+
+            pushContextRefs: (refs) =>
+                set((state) => ({
+                    pendingContextRefs: [...state.pendingContextRefs, ...refs],
+                })),
+
+            setCommandPalette: (open) => set({ commandPaletteOpen: open }),
+            requestUnitCreate: () => set((state) => ({ unitCreateRequested: state.unitCreateRequested + 1 })),
+
+            drainContextRefs: () => {
+                let refs: Array<{ type: string; id: string; label: string }> = [];
+                set((state) => {
+                    refs = state.pendingContextRefs;
+                    return { pendingContextRefs: [] };
+                });
+                return refs;
+            },
         }),
         {
             name: "video-studio:workspace",

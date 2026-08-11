@@ -1,8 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { App, Button, Popconfirm, Spin, Switch, Table, Tag } from "antd";
-import { Plus, RotateCw, SquarePen, Trash2 } from "lucide-react";
+import { AudioWaveform, BrainCircuit, ImageIcon, Plus, RotateCw, SquarePen, Trash2, Video } from "lucide-react";
 
 import { ProviderFormModal } from "@/features/settings/components/provider-form-modal";
 import { capabilityLabel } from "@/features/workspace/lib/labels";
@@ -11,69 +10,91 @@ import {
     useDeleteProviderProfile,
     useModelCapabilities,
     useProviderProfiles,
+    useTestProviderProfile,
     useUpdateProviderProfile,
 } from "@/services/queries";
+import { Button, Popconfirm, Spin, Surface, Switch, Table, Tag, Text, useApp } from "@/shared/ui";
 import { EmptyState } from "@/shared/ui/empty-state";
 import { ErrorPanel } from "@/shared/ui/error-panel";
 
 /** 工作台真正依赖的能力，缺失时应该显眼地提示。 */
 const CORE_CAPABILITIES = ["llm", "image", "video", "tts"];
 
+function capabilityIcon(type: string) {
+    if (type === "llm") return <BrainCircuit className="size-4" />;
+    if (type === "image") return <ImageIcon className="size-4" />;
+    if (type === "video") return <Video className="size-4" />;
+    return <AudioWaveform className="size-4" />;
+}
+
 function ProviderCard({
     provider,
     onEdit,
     onDelete,
     onToggle,
+    onTest,
+    testing,
 }: {
     provider: ProviderProfile;
     onEdit: () => void;
     onDelete: () => void;
     onToggle: (enabled: boolean) => void;
+    onTest: () => void;
+    testing: boolean;
 }) {
     return (
-        <div className="rounded-lg border border-[var(--studio-line)] bg-[var(--studio-surface)] p-5">
+        <Surface level="panel" radius="md" hairline lift inset="4" className="h-full">
             <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0">
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-[var(--r-sm)] bg-[var(--s-raised)] text-[var(--s-muted)]">
+                    {capabilityIcon(provider.capability_type)}
+                </span>
+                <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                        <span className="truncate text-[13px] font-semibold text-[var(--studio-ink)]">{provider.name}</span>
-                        <Tag color={provider.enabled ? "green" : "default"} className="m-0">
-                            {provider.enabled ? "启用" : "停用"}
-                        </Tag>
+                        <Text as="span" variant="body" tone="ink" weight={600} truncate>
+                            {provider.name}
+                        </Text>
+                        <Tag className="m-0">{capabilityLabel(provider.capability_type)}</Tag>
                     </div>
-                    <div className="mt-1 truncate text-[11px] text-[var(--studio-faint)]">
+                    <div className="mt-1 truncate text-caption text-[var(--s-faint)]">
                         {provider.adapter} · {provider.base_url || "无 Base URL"}
                     </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-1">
-                    <Switch size="small" checked={provider.enabled} onChange={onToggle} aria-label={`启用 ${provider.name}`} />
-                    <Button type="text" size="small" icon={<SquarePen className="size-3.5" />} onClick={onEdit}>
-                        编辑
-                    </Button>
-                    <Popconfirm title="删除此渠道？" okText="删除" cancelText="取消" onConfirm={onDelete}>
-                        <Button type="text" size="small" danger aria-label="删除渠道" icon={<Trash2 className="size-3.5" />} />
-                    </Popconfirm>
-                </div>
+                <Switch size="small" checked={provider.enabled} onChange={onToggle} aria-label={`启用 ${provider.name}`} />
             </div>
 
-            <dl className="mt-4 space-y-2 text-[11px]">
+            <dl className="mt-4 space-y-2 text-caption">
                 <div className="flex items-center justify-between">
-                    <dt className="text-[var(--studio-faint)]">API Key</dt>
-                    <dd className="font-mono text-[var(--studio-muted)]">{provider.api_key || "未设置"}</dd>
+                    <dt className="text-[var(--s-faint)]">API Key</dt>
+                    <dd className="font-mono text-[var(--s-muted)]">{provider.api_key || "未设置"}</dd>
                 </div>
                 <div className="flex items-center justify-between gap-4">
-                    <dt className="shrink-0 text-[var(--studio-faint)]">模型</dt>
-                    <dd className="truncate text-[var(--studio-muted)]">
+                    <dt className="shrink-0 text-[var(--s-faint)]">模型</dt>
+                    <dd className="truncate text-[var(--s-muted)]">
                         {provider.models.map((model) => model.model_id).join("、") || "未配置"}
                     </dd>
                 </div>
             </dl>
-        </div>
+            <div className="mt-4 flex flex-wrap gap-2 border-t border-[var(--hairline)] pt-3">
+                <Button size="sm" loading={testing} onClick={onTest}>
+                    连接测试
+                </Button>
+                <Button size="sm" icon={<SquarePen className="size-3.5" />} onClick={onEdit}>
+                    编辑
+                </Button>
+                <Popconfirm title="删除此渠道？" okText="删除" cancelText="取消" onConfirm={onDelete}>
+                    <Button variant="ghost" size="sm" danger aria-label="删除渠道" icon={<Trash2 className="size-3.5" />} />
+                </Popconfirm>
+                <Tag color={provider.enabled ? "green" : "default"} className="ml-auto self-center">
+                    {provider.enabled ? "启用" : "停用"}
+                </Tag>
+            </div>
+        </Surface>
     );
 }
 
 /** 模型与渠道配置。 */
 export default function SettingsPage() {
-    const { message } = App.useApp();
+    const { message } = useApp();
     const [modalOpen, setModalOpen] = useState(false);
     const [editing, setEditing] = useState<ProviderProfile | null>(null);
 
@@ -81,20 +102,10 @@ export default function SettingsPage() {
     const capabilitiesQuery = useModelCapabilities();
     const updateProvider = useUpdateProviderProfile();
     const deleteProvider = useDeleteProviderProfile();
+    const testProvider = useTestProviderProfile();
 
     const providers = useMemo(() => providersQuery.data || [], [providersQuery.data]);
     const capabilities = useMemo(() => capabilitiesQuery.data || [], [capabilitiesQuery.data]);
-
-    const groups = useMemo(() => {
-        const result = new Map<string, ProviderProfile[]>();
-        providers.forEach((provider) => {
-            const key = provider.capability_type || "other";
-            const list = result.get(key) || [];
-            list.push(provider);
-            result.set(key, list);
-        });
-        return [...result.entries()].sort((a, b) => a[0].localeCompare(b[0]));
-    }, [providers]);
 
     const missing = useMemo(
         () => CORE_CAPABILITIES.filter((type) => !capabilities.some((item) => item.capability_type === type && item.enabled)),
@@ -128,27 +139,67 @@ export default function SettingsPage() {
         }
     };
 
+    const test = async (provider: ProviderProfile) => {
+        try {
+            const result = await testProvider.mutateAsync(provider.id);
+            if (result.ok) {
+                message.success(`连接正常（${result.latency_ms}ms）`);
+            } else {
+                message.error(`连接失败：${result.detail || "未知错误"}`);
+            }
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "连接测试失败");
+        }
+    };
+
     return (
-        <div className="mx-auto w-full max-w-[1100px] px-5 py-8 md:px-8">
-            <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
+        <div className="mx-auto w-full max-w-[1280px] px-5 py-7 md:px-8 md:py-8">
+            <header className="flex flex-wrap items-start justify-between gap-4 border-b border-[var(--hairline)] pb-5">
                 <div>
-                    <h1 className="text-[20px] font-semibold text-[var(--studio-ink)]">模型与渠道</h1>
-                    <p className="mt-1 text-[13px] text-[var(--studio-muted)]">
+                    <Text as="h1" variant="title" tone="ink">
+                        模型与渠道
+                    </Text>
+                    <Text as="p" variant="body" tone="muted" className="mt-1">
                         每种能力都可以配置外部 API Key 与 Base URL，密钥只回显掩码。
-                    </p>
+                    </Text>
                 </div>
                 <div className="flex gap-2">
                     <Button icon={<RotateCw className="size-4" />} onClick={() => void providersQuery.refetch()}>
                         刷新
                     </Button>
-                    <Button type="primary" icon={<Plus className="size-4" />} onClick={openCreate}>
+                    <Button variant="primary" icon={<Plus className="size-4" />} onClick={openCreate}>
                         新建渠道
                     </Button>
                 </div>
             </header>
 
+            <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                {CORE_CAPABILITIES.map((type) => {
+                    const models = capabilities.filter((item) => item.capability_type === type && item.enabled);
+                    const defaultModel = models.find((item) => item.is_default)?.model_id || models[0]?.model_id;
+                    return (
+                        <Surface key={type} level="panel" radius="md" hairline lift inset="4">
+                            <div className="flex items-center gap-2 text-[var(--s-muted)]">
+                                {capabilityIcon(type)}
+                                <Text variant="label" tone="ink" className="min-w-0 flex-1">
+                                    {capabilityLabel(type)}
+                                </Text>
+                                <span className={`size-1.5 rounded-full ${models.length ? "bg-[var(--s-success)]" : "bg-[var(--s-danger)]"}`} />
+                            </div>
+                            <Text as="div" variant="heading" tone="ink" className="mt-4">
+                                {models.length} 个模型
+                            </Text>
+                            <Text variant="caption" tone="faint" truncate className="mt-1 block">
+                                {defaultModel ? `默认：${defaultModel}` : "尚未配置可用模型"}
+                            </Text>
+                        </Surface>
+                    );
+                })}
+            </div>
+
             {missing.length ? (
-                <div className="mb-6 rounded-lg border border-[var(--studio-line)] bg-[var(--studio-surface-raised)] px-4 py-3 text-[12px] text-[var(--studio-muted)]">
+                <Surface level="raised" radius="md" hairline inset="3" className="mt-5">
+                    <Text variant="label" tone="muted">
                     尚未配置的能力：
                     {missing.map((type) => (
                         <Tag key={type} className="ml-1.5">
@@ -156,8 +207,21 @@ export default function SettingsPage() {
                         </Tag>
                     ))}
                     <span className="ml-1">配置后工作台对应的功能才会开放。</span>
-                </div>
+                    </Text>
+                </Surface>
             ) : null}
+
+            <div className="mt-7 flex items-end justify-between gap-3">
+                <div>
+                    <Text as="h2" variant="heading" tone="ink">
+                        已配置渠道
+                    </Text>
+                    <Text variant="caption" tone="faint" className="mt-1 block">
+                        密钥只显示掩码；连接测试不会保存额外数据。
+                    </Text>
+                </div>
+                {!missing.length ? <Tag color="green">核心能力已覆盖</Tag> : null}
+            </div>
 
             {providersQuery.error ? (
                 <ErrorPanel
@@ -169,45 +233,37 @@ export default function SettingsPage() {
                 <div className="flex justify-center py-20">
                     <Spin size="large" />
                 </div>
-            ) : groups.length === 0 ? (
+            ) : providers.length === 0 ? (
                 <EmptyState
                     title="还没有配置任何渠道"
                     description="至少配置一个文本模型，AI 创作助手才能工作。"
                     action={
-                        <Button type="primary" icon={<Plus className="size-4" />} onClick={openCreate}>
+                        <Button variant="primary" icon={<Plus className="size-4" />} onClick={openCreate}>
                             新建渠道
                         </Button>
                     }
                 />
             ) : (
-                <div className="space-y-6">
-                    {groups.map(([capability, items]) => (
-                        <section key={capability}>
-                            <div className="mb-2 flex items-center gap-2">
-                                <h2 className="text-[13px] font-semibold text-[var(--studio-ink)]">
-                                    {capabilityLabel(capability)}
-                                </h2>
-                                <span className="text-[11px] text-[var(--studio-faint)]">{items.length} 个渠道</span>
-                            </div>
-                            <div className="grid gap-4 lg:grid-cols-2">
-                                {items.map((provider) => (
-                                    <ProviderCard
-                                        key={provider.id}
-                                        provider={provider}
-                                        onEdit={() => openEdit(provider)}
-                                        onDelete={() => void remove(provider.id)}
-                                        onToggle={(enabled) => void toggle(provider, enabled)}
-                                    />
-                                ))}
-                            </div>
-                        </section>
+                <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                    {providers.map((provider) => (
+                        <ProviderCard
+                            key={provider.id}
+                            provider={provider}
+                            onEdit={() => openEdit(provider)}
+                            onDelete={() => void remove(provider.id)}
+                            onToggle={(enabled) => void toggle(provider, enabled)}
+                            onTest={() => void test(provider)}
+                            testing={testProvider.isPending && testProvider.variables === provider.id}
+                        />
                     ))}
                 </div>
             )}
 
             <section className="mt-8">
-                <h2 className="mb-2 text-[13px] font-semibold text-[var(--studio-ink)]">模型能力总览</h2>
-                <div className="overflow-hidden rounded-lg border border-[var(--studio-line)] bg-[var(--studio-surface)]">
+                <Text as="h2" variant="heading" tone="ink" className="mb-2 block">
+                    模型能力总览
+                </Text>
+                <Surface level="panel" radius="md" className="overflow-hidden">
                     <Table<ModelCapability>
                         rowKey={(row) => `${row.provider_profile_id}:${row.model_id}`}
                         size="small"
@@ -218,7 +274,7 @@ export default function SettingsPage() {
                             {
                                 title: "模型",
                                 dataIndex: "model_id",
-                                render: (value: string) => <span className="font-mono text-[12px]">{value}</span>,
+                                render: (value: string) => <span className="font-mono text-label">{value}</span>,
                             },
                             {
                                 title: "能力",
@@ -236,9 +292,20 @@ export default function SettingsPage() {
                                     </Tag>
                                 ),
                             },
+                            {
+                                title: "默认",
+                                dataIndex: "is_default",
+                                width: 90,
+                                render: (value: boolean) =>
+                                    value ? (
+                                        <Tag color="blue" className="m-0">
+                                            默认
+                                        </Tag>
+                                    ) : null,
+                            },
                         ]}
                     />
-                </div>
+                </Surface>
             </section>
 
             <ProviderFormModal open={modalOpen} provider={editing} onClose={() => setModalOpen(false)} />

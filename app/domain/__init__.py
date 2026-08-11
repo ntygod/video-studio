@@ -12,7 +12,7 @@ from .bible import (
 from .brief import Audience, Constraint, CreativeBrief, PlatformTarget
 from .edit import AudioDecision, EditDecision, EditPlan, TransitionDecision
 from .enums import *
-from .job import JobEvent, NodeRun, PersistentJob
+from .job import JobEvent, PersistentJob
 from .narrative import ActionCue, Act, Beat, DialogueLine, Scene, StoryGraph
 from .project import CreativeProject, CreativeUnit, DeliveryProfile, ProjectSettings
 from .review import Approval, ChangeProposal, PatchOperation, ReviewIssue

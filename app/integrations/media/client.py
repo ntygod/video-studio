@@ -7,36 +7,40 @@ from typing import Any
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from app.integrations.provider_http import provider_endpoint, provider_headers
+
 
 class MediaProviderError(RuntimeError):
     pass
 
 
-def _base_url(provider: dict[str, Any]) -> str:
-    return str(provider.get("base_url") or "").rstrip("/")
-
-
-def _api_key(provider: dict[str, Any]) -> str:
-    return str(provider.get("api_key") or "")
-
-
-def _model(provider: dict[str, Any]) -> str:
+def _model(provider: dict[str, Any], model: str | None = None) -> str:
     models = provider.get("models") or []
     if not models:
         raise MediaProviderError("provider has no model profile")
+    if model:
+        for item in models:
+            if item.get("model_id") == model:
+                return model
+    for item in models:
+        if item.get("is_default"):
+            return str(item["model_id"])
     return models[0]["model_id"]
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=6), reraise=True)
-def generate_image(provider: dict[str, Any], prompt: str, parameters: dict[str, Any]) -> bytes:
+def generate_image(
+    provider: dict[str, Any],
+    prompt: str,
+    parameters: dict[str, Any],
+    model: str | None = None,
+) -> bytes:
     adapter = provider.get("adapter", "openai")
-    url = _base_url(provider)
-    key = _api_key(provider)
-    model = _model(provider)
+    model = _model(provider, model)
     if adapter == "grok2api":
         response = httpx.post(
-            url + "/v1/images/generations",
-            headers={"Authorization": "Bearer " + key},
+            provider_endpoint(provider, "images/generations", "image_path"),
+            headers=provider_headers(provider),
             json={
                 "model": model,
                 "prompt": prompt,
@@ -54,8 +58,8 @@ def generate_image(provider: dict[str, Any], prompt: str, parameters: dict[str, 
         return _decode_image(candidates[0])
     if adapter == "openai":
         response = httpx.post(
-            url + "/images/generations",
-            headers={"Authorization": "Bearer " + key},
+            provider_endpoint(provider, "images/generations", "image_path"),
+            headers=provider_headers(provider),
             json={
                 "model": model,
                 "prompt": prompt,
@@ -84,11 +88,14 @@ def _decode_image(item: dict[str, Any]) -> bytes:
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8), reraise=True)
-def generate_video(provider: dict[str, Any], prompt: str, parameters: dict[str, Any]) -> bytes:
+def generate_video(
+    provider: dict[str, Any],
+    prompt: str,
+    parameters: dict[str, Any],
+    model: str | None = None,
+) -> bytes:
     adapter = provider.get("adapter", "grok2api")
-    url = _base_url(provider)
-    key = _api_key(provider)
-    model = _model(provider)
+    model = _model(provider, model)
     if adapter == "grok2api":
         payload: dict[str, Any] = {
             "model": model,
@@ -100,8 +107,8 @@ def generate_video(provider: dict[str, Any], prompt: str, parameters: dict[str, 
         if reference:
             payload["image"] = reference
         response = httpx.post(
-            url + "/v1/videos/generations",
-            headers={"Authorization": "Bearer " + key},
+            provider_endpoint(provider, "videos/generations", "video_path"),
+            headers=provider_headers(provider),
             json=payload,
             timeout=900,
         )
@@ -115,8 +122,8 @@ def generate_video(provider: dict[str, Any], prompt: str, parameters: dict[str, 
         return video.content
     if adapter == "openai":
         response = httpx.post(
-            url + "/videos/generations",
-            headers={"Authorization": "Bearer " + key},
+            provider_endpoint(provider, "videos/generations", "video_path"),
+            headers=provider_headers(provider),
             json={"model": model, "prompt": prompt, "duration": parameters.get("duration_seconds", 5)},
             timeout=900,
         )

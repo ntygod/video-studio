@@ -2,16 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import {
-    createProviderProfile,
-    deleteProviderProfile,
-    getModelCapabilities,
-    hasCapability,
-    listProviderProfiles,
-    updateProviderProfile,
-    type ModelCapability,
-    type ProviderProfile,
-} from "@/services/api";
+import { createProviderProfile, deleteProviderProfile, discoverProviderModels, getModelCapabilities, hasCapability, listProviderProfiles, testProviderProfile, updateProviderProfile, type ModelCapability, type ProviderProfile } from "@/services/api";
 import { qk } from "@/services/queries/keys";
 
 export function useProviderProfiles() {
@@ -49,13 +40,21 @@ export function useCreateProviderProfile() {
 }
 
 export function useUpdateProviderProfile() {
-    return useProviderMutation(({ id, input }: { id: string; input: Partial<ProviderProfile> }) =>
-        updateProviderProfile(id, input),
-    );
+    return useProviderMutation(({ id, input }: { id: string; input: Partial<ProviderProfile> }) => updateProviderProfile(id, input));
 }
 
 export function useDeleteProviderProfile() {
     return useProviderMutation((id: string) => deleteProviderProfile(id));
+}
+
+/** 从尚未保存或已保存的渠道配置中读取上游真实模型列表。 */
+export function useDiscoverProviderModels() {
+    return useMutation({ mutationFn: discoverProviderModels });
+}
+
+/** 连接测试（不写缓存，调用方自行展示结果）。 */
+export function useTestProviderProfile() {
+    return useMutation({ mutationFn: testProviderProfile });
 }
 
 /** 按能力类型分组，供设置页以"能力优先"的方式展示。 */

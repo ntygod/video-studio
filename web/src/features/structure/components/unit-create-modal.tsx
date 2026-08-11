@@ -1,8 +1,7 @@
 "use client";
 
-import { App, Form, Input, Modal, Select } from "antd";
-
 import { useCreateUnits } from "@/services/queries";
+import { Form, Input, Modal, Select, Textarea, useApp } from "@/shared/ui";
 
 export type UnitCreateModalProps = {
     open: boolean;
@@ -40,7 +39,7 @@ export function UnitCreateModal({
     onClose,
     onCreated,
 }: UnitCreateModalProps) {
-    const { message } = App.useApp();
+    const { message } = useApp();
     const [form] = Form.useForm<UnitFormValues>();
     const createUnits = useCreateUnits(projectId);
 
@@ -74,7 +73,6 @@ export function UnitCreateModal({
             okText="创建"
             cancelText="取消"
             confirmLoading={createUnits.isPending}
-            forceRender
         >
             <Form form={form} layout="vertical" initialValues={{ parent_id: defaultParentId || undefined }} className="pt-2">
                 <Form.Item name="title" label="名称" rules={[{ required: true, message: "请输入名称" }]}>
@@ -87,7 +85,7 @@ export function UnitCreateModal({
                     <Select allowClear showSearch optionFilterProp="label" options={unitOptions} placeholder="项目根级" />
                 </Form.Item>
                 <Form.Item name="summary" label="一句话说明">
-                    <Input.TextArea rows={3} placeholder="这个单元讲什么" />
+                    <Textarea rows={3} placeholder="这个单元讲什么" />
                 </Form.Item>
             </Form>
         </Modal>

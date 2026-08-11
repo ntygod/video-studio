@@ -17,13 +17,9 @@ reason, confidence。
 
 def generate_edit_plan(database, project_id: str, unit_id: str | None) -> dict[str, Any]:
     with UnitOfWork(database) as uow:
-        provider = None
-        for item in uow.providers.list():
-            if item["capability_type"] == "llm" and item["enabled"]:
-                provider = uow.providers.get(item["id"], include_secret=True)
-                break
-        if not provider:
-            raise RuntimeError("没有启用的 LLM 渠道")
+        from app.application.providers import provider_for_capability
+
+        provider = provider_for_capability(uow, "llm")
         artifacts = uow.artifacts.list(project_id, unit_id=unit_id)
         assets = uow.assets.list(project_id, unit_id=unit_id)
         shot_plan = next(
@@ -44,13 +40,23 @@ def generate_edit_plan(database, project_id: str, unit_id: str | None) -> dict[s
         ]
     )
     with UnitOfWork(database) as uow:
-        artifact = uow.artifacts.create(
-            project_id=project_id,
-            unit_id=unit_id,
-            kind="edit_plan",
-            name="AI 剪辑计划",
-            schema_id="open/edit_plan@1",
-            payload=response,
-            source="ai_edit",
-        )
+        artifact = uow.artifacts.find_latest(project_id, unit_id, "edit_plan")
+        if artifact:
+            uow.artifacts.add_version(
+                artifact["id"],
+                response,
+                source="ai_edit",
+                note="重新生成 AI 剪辑计划",
+            )
+            artifact = uow.artifacts.get(artifact["id"])
+        else:
+            artifact = uow.artifacts.create(
+                project_id=project_id,
+                unit_id=unit_id,
+                kind="edit_plan",
+                name="AI 剪辑计划",
+                schema_id="open/edit_plan@1",
+                payload=response,
+                source="ai_edit",
+            )
         return artifact

@@ -3,9 +3,9 @@
 import { useMemo } from "react";
 
 import type { Artifact, Asset, CreativeUnit, ProjectDetail, Proposal } from "@/services/api";
-import { useAssets, useProject } from "@/services/queries";
+import { useArtifacts, useAssets, useProject, useProposals, useUnits } from "@/services/queries";
 import { useWorkspaceRoute } from "@/features/workspace/hooks/use-workspace-route";
-import { META_ARTIFACT_KINDS } from "@/features/workspace/lib/labels";
+import { isContentArtifactKind, META_ARTIFACT_KINDS } from "@/features/workspace/lib/labels";
 
 /** 单元树节点：在原始单元上挂 children 与层级。 */
 export type UnitNode = CreativeUnit & {
@@ -66,11 +66,17 @@ type WorkspaceData = {
     selectedUnitId: string | null;
     /** 当前选中的单元对象；null 表示作用于整个项目。 */
     selectedUnit: CreativeUnit | null;
+    /** 全部单元（扁平）。 */
+    units: CreativeUnit[];
     /** 单元树。 */
     unitTree: UnitNode[];
     /** 供 Select 使用的单元选项。 */
     unitOptions: Array<{ value: string; label: string }>;
-    /** 当前作用域下的创作稿件（排除 brief / project_bible）。 */
+    /** 全部稿件（含 brief / project_bible，T3.1 后由分页接口组装）。 */
+    artifacts: Artifact[];
+    /** 当前作用域下可进入版本审阅的稿件（排除项目内建元数据）。 */
+    reviewableArtifacts: Artifact[];
+    /** 当前作用域下的真实内容稿件（再排除时间线、剪辑计划等制作产物）。 */
     contentArtifacts: Artifact[];
     /** 当前作用域下的待处理提案。 */
     pendingProposals: Proposal[];
@@ -84,84 +90,76 @@ type WorkspaceData = {
 };
 
 /**
- * 工作台共享数据。
+ * 工作台共享数据（T3.1 重构）。
  * <p>
- * 一处组装项目详情 + 素材，并按当前选中单元做作用域过滤，取代旧实现里那个
- * 每次操作都重拉 4 个接口的 load()。所有派生值都走 useMemo，切换单元不会重新请求项目。
- *
- * @return WorkspaceData 当前工作台上下文
+ * 项目详情已瘦身：单元/稿件/提案各自走分页接口并在此组装。
+ * 所有派生值都走 useMemo，切换单元不会重新请求项目。
  */
 export function useWorkspaceData(): WorkspaceData {
     const { projectId, selectedUnitId } = useWorkspaceRoute();
     const projectQuery = useProject(projectId);
+    const unitsQuery = useUnits(projectId);
+    const artifactsQuery = useArtifacts(projectId, null, true);
+    const proposalsQuery = useProposals(projectId);
     const assetsQuery = useAssets(projectId, selectedUnitId);
 
     const project = projectQuery.data;
-    const units = useMemo(() => project?.units || [], [project?.units]);
+    const units = useMemo(() => unitsQuery.data || [], [unitsQuery.data]);
 
     const unitTree = useMemo(() => buildUnitTree(units), [units]);
 
-    const selectedUnit = useMemo(
-        () => (selectedUnitId ? units.find((unit) => unit.id === selectedUnitId) || null : null),
-        [selectedUnitId, units],
-    );
+    const selectedUnit = useMemo(() => (selectedUnitId ? units.find((unit) => unit.id === selectedUnitId) || null : null), [selectedUnitId, units]);
 
     const unitOptions = useMemo(
-        () => flattenUnitTree(unitTree).map((unit) => ({
-            value: unit.id,
-            label: `${"　".repeat(unit.depth)}${unit.title}`,
-        })),
+        () =>
+            flattenUnitTree(unitTree).map((unit) => ({
+                value: unit.id,
+                label: `${"　".repeat(unit.depth)}${unit.title}`,
+            })),
         [unitTree],
     );
 
-    const inScope = useMemo(
-        () => (unitId: string | null) => !selectedUnitId || unitId === selectedUnitId,
-        [selectedUnitId],
-    );
+    const inScope = useMemo(() => (unitId: string | null) => !selectedUnitId || unitId === selectedUnitId, [selectedUnitId]);
 
-    const contentArtifacts = useMemo(
-        () => (project?.artifacts || []).filter(
-            (artifact) => !META_ARTIFACT_KINDS.includes(artifact.kind) && inScope(artifact.unit_id),
-        ),
-        [project?.artifacts, inScope],
-    );
+    const artifacts = useMemo(() => artifactsQuery.data || [], [artifactsQuery.data]);
 
-    const pendingProposals = useMemo(
-        () => (project?.pending_proposals || []).filter((proposal) => inScope(proposal.unit_id)),
-        [project?.pending_proposals, inScope],
-    );
+    const reviewableArtifacts = useMemo(() => artifacts.filter((artifact) => !META_ARTIFACT_KINDS.includes(artifact.kind) && inScope(artifact.unit_id)), [artifacts, inScope]);
 
-    const hasEditPlan = useMemo(
-        () => (project?.artifacts || []).some((artifact) => artifact.kind === "edit_plan" && inScope(artifact.unit_id)),
-        [project?.artifacts, inScope],
-    );
+    const contentArtifacts = useMemo(() => reviewableArtifacts.filter((artifact) => isContentArtifactKind(artifact.kind)), [reviewableArtifacts]);
+
+    const pendingProposals = useMemo(() => (proposalsQuery.data || []).filter((proposal) => inScope(proposal.unit_id)), [proposalsQuery.data, inScope]);
+
+    const hasEditPlan = useMemo(() => artifacts.some((artifact) => artifact.kind === "edit_plan" && inScope(artifact.unit_id)), [artifacts, inScope]);
 
     const hasBibleContent = useMemo(() => {
         const bible = project?.bible;
         if (!bible) return false;
         return Boolean(
             bible.logline ||
-                bible.long_arc ||
-                bible.themes.length ||
-                bible.characters.length ||
-                bible.world.premise ||
-                bible.world.era ||
-                bible.world.locations.length ||
-                bible.world.rules.length ||
-                bible.style.visual_direction ||
-                bible.style.sound_direction,
+            bible.long_arc ||
+            bible.themes.length ||
+            bible.characters.length ||
+            bible.world.premise ||
+            bible.world.era ||
+            bible.world.locations.length ||
+            bible.world.rules.length ||
+            bible.style.visual_direction ||
+            bible.style.sound_direction,
         );
     }, [project?.bible]);
 
     return {
         projectId,
         project,
-        isLoading: projectQuery.isLoading,
-        error: projectQuery.error,
+        isLoading: projectQuery.isLoading || unitsQuery.isLoading,
+        error: projectQuery.error || unitsQuery.error || null,
         selectedUnitId,
         selectedUnit,
+        units,
         unitTree,
         unitOptions,
+        artifacts,
+        reviewableArtifacts,
         contentArtifacts,
         pendingProposals,
         assets: assetsQuery.data || [],

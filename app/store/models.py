@@ -121,6 +121,7 @@ class ArtifactRow(Base):
     current_version_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[float] = mapped_column(Float, nullable=False)
     updated_at: Mapped[float] = mapped_column(Float, nullable=False)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
 
     versions: Mapped[list["ArtifactVersionRow"]] = relationship(
         back_populates="artifact",
@@ -210,6 +211,7 @@ class ModelProfileRow(Base):
     capability_type: Mapped[str] = mapped_column(String(50), nullable=False)
     capabilities_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     defaults_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     provider: Mapped[ProviderProfileRow] = relationship(back_populates="models")
 
@@ -228,6 +230,7 @@ class AssetRow(Base):
     kind: Mapped[str] = mapped_column(String(50), nullable=False)
     name: Mapped[str] = mapped_column(String(300), nullable=False)
     uri: Mapped[str] = mapped_column(Text, nullable=False)
+    thumb_uri: Mapped[str] = mapped_column(Text, nullable=False, default="")
     mime_type: Mapped[str] = mapped_column(String(200), nullable=False)
     sha256: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     parent_asset_id: Mapped[str | None] = mapped_column(
@@ -252,6 +255,14 @@ class JobRow(Base):
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="queued")
     progress: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     cancel_requested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=3)
+    parent_job_id: Mapped[str | None] = mapped_column(
+        ForeignKey("jobs.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    lease_until: Mapped[float | None] = mapped_column(Float, nullable=True)
+    worker_id: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    turn_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     payload_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     error: Mapped[str] = mapped_column(Text, nullable=False, default="")
@@ -273,30 +284,46 @@ class JobEventRow(Base):
     created_at: Mapped[float] = mapped_column(Float, nullable=False)
 
 
-class NodeRunRow(Base):
-    __tablename__ = "node_runs"
-    __table_args__ = (Index("ix_node_input_hash", "node_key", "input_hash"),)
+class AgentTurnRow(Base):
+    __tablename__ = "agent_turns"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    job_id: Mapped[str] = mapped_column(
-        ForeignKey("jobs.id", ondelete="CASCADE"), nullable=False, index=True
+    conversation_id: Mapped[str] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    node_key: Mapped[str] = mapped_column(String(200), nullable=False)
-    status: Mapped[str] = mapped_column(String(30), nullable=False, default="queued")
-    input_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
-    output_refs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    unit_id: Mapped[str | None] = mapped_column(
+        ForeignKey("creative_units.id", ondelete="SET NULL"), nullable=True
+    )
+    user_message_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    assistant_message_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="running")
+    context_refs_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    created_entities_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
+    prompt_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     error: Mapped[str] = mapped_column(Text, nullable=False, default="")
     created_at: Mapped[float] = mapped_column(Float, nullable=False)
     updated_at: Mapped[float] = mapped_column(Float, nullable=False)
 
 
-class WorkflowRow(Base):
-    __tablename__ = "workflows"
+class AgentStepRow(Base):
+    __tablename__ = "agent_steps"
+    __table_args__ = (Index("ix_steps_turn_seq", "turn_id", "seq"),)
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    name: Mapped[str] = mapped_column(String(300), nullable=False)
-    description: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    version: Mapped[str] = mapped_column(String(50), nullable=False, default="1")
-    definition_json: Mapped[str] = mapped_column(Text, nullable=False)
+    turn_id: Mapped[str] = mapped_column(
+        ForeignKey("agent_turns.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    kind: Mapped[str] = mapped_column(String(30), nullable=False)
+    tool_name: Mapped[str] = mapped_column(String(100), nullable=False, default="")
+    arguments_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    result_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    status: Mapped[str] = mapped_column(String(30), nullable=False, default="running")
+    error: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[float] = mapped_column(Float, nullable=False)
-    updated_at: Mapped[float] = mapped_column(Float, nullable=False)

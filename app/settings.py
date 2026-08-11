@@ -11,8 +11,11 @@ try:
 
     _candidate = Path(sys.executable).parent / "static_ffmpeg.exe"
     FFMPEG_PATH = str(_candidate) if _candidate.exists() else "ffmpeg"
+    _probe_candidate = Path(sys.executable).parent / "static_ffprobe.exe"
+    FFPROBE_PATH = str(_probe_candidate) if _probe_candidate.exists() else "ffprobe"
 except Exception:
     FFMPEG_PATH = "ffmpeg"
+    FFPROBE_PATH = "ffprobe"
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -33,6 +36,7 @@ class Settings(BaseSettings):
     media_dir: Path = BASE_DIR / "data" / "media"
     work_dir: Path = BASE_DIR / "data" / "work"
     ffmpeg_path: str = FFMPEG_PATH
+    ffprobe_path: str = FFPROBE_PATH
 
     def resolved_database_url(self) -> str:
         if self.database_url:
@@ -47,7 +51,11 @@ class Settings(BaseSettings):
     def media_store(self):
         from .store.media_store import MediaStore
 
-        return MediaStore(self.media_dir)
+        return MediaStore(
+            self.media_dir,
+            ffmpeg_path=self.ffmpeg_path,
+            ffprobe_path=self.ffprobe_path,
+        )
 
 
 settings = Settings()

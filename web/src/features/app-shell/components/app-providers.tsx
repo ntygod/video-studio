@@ -3,13 +3,12 @@
 import type { ReactNode } from "react";
 import { useEffect, useLayoutEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { App, ConfigProvider } from "antd";
-import zhCN from "antd/locale/zh_CN";
 
 import { ClientRootInit } from "@/features/app-shell/components/client-root-init";
 import { getAntThemeConfig } from "@/shared/lib/app-theme";
 import { useThemeStore } from "@/features/theme/stores/use-theme-store";
 import type { ResolvedTheme, ThemePreference } from "@/shared/lib/theme-preference";
+import { AntdProvider } from "@/shared/ui";
 
 const queryClient = new QueryClient({
     defaultOptions: {
@@ -58,12 +57,10 @@ export function AppProviders({
     }, [preference, syncSystemTheme]);
 
     return (
-        <ConfigProvider locale={zhCN} theme={getAntThemeConfig(effectiveResolvedTheme)}>
-            <App>
-                <QueryClientProvider client={queryClient}>
-                    <ClientRootInit>{children}</ClientRootInit>
-                </QueryClientProvider>
-            </App>
-        </ConfigProvider>
+        <AntdProvider theme={getAntThemeConfig(effectiveResolvedTheme)}>
+            <QueryClientProvider client={queryClient}>
+                <ClientRootInit>{children}</ClientRootInit>
+            </QueryClientProvider>
+        </AntdProvider>
     );
 }

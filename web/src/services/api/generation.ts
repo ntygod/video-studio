@@ -20,6 +20,7 @@ export function renderTimeline(projectId: string, timeline: Record<string, unkno
 
 export type GenerateInput = {
     capability: string;
+    unit_id?: string | null;
     prompt?: string;
     schema_id?: string;
     artifact_kind?: string;
@@ -31,4 +32,21 @@ export type GenerateInput = {
 /** 发起一次生成任务（llm / image / video / tts），返回持久化的 Job。 */
 export function startGeneration(projectId: string, input: GenerateInput) {
     return post<Job>(`/api/projects/${seg(projectId)}/generate`, input);
+}
+
+export type BatchGenerateInput = {
+    unit_ids: string[];
+    capability: string;
+    prompt_template: string;
+    params?: Record<string, unknown>;
+};
+
+export type BatchGenerateResult = {
+    parent_job_id: string;
+    child_job_ids: string[];
+};
+
+/** 批量生成：父任务进度 = 子任务完成比例。 */
+export function generateBatch(projectId: string, input: BatchGenerateInput) {
+    return post<BatchGenerateResult>(`/api/projects/${seg(projectId)}/generate/batch`, input);
 }

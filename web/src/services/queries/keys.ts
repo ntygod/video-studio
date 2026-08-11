@@ -21,6 +21,7 @@ export const qk = {
     units: (projectId: string, parentId?: string | null) => ["units", projectId, scope(parentId)] as const,
 
     artifactsRoot: (projectId: string) => ["artifacts", projectId] as const,
+    proposalsRoot: (projectId: string) => ["proposals", projectId] as const,
     artifacts: (projectId: string, unitId?: string | null) => ["artifacts", projectId, scope(unitId)] as const,
 
     conversationsRoot: (projectId: string) => ["conversations", projectId] as const,
@@ -34,7 +35,8 @@ export const qk = {
     jobs: (projectId?: string) => ["jobs", projectId || "__all__"] as const,
     job: (jobId: string) => ["job", jobId] as const,
 
+    search: (projectId: string) => ["search", projectId] as const,
+
     providers: () => ["providers"] as const,
     capabilities: () => ["capabilities"] as const,
-    workflows: () => ["workflows"] as const,
 };

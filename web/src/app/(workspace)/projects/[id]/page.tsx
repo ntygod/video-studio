@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 
-import { DEFAULT_CANVAS_VIEW } from "@/features/workspace/stores/use-workspace-store";
+import { DEFAULT_CANVAS_VIEW } from "@/features/workspace/lib/canvas-views";
 
 /**
  * 项目根路径重定向到默认视图。

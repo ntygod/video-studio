@@ -25,9 +25,13 @@ export function useMediaQuery(query: string): boolean {
     return matches;
 }
 
-/** 结构面板以固定栏形式展示的断点（Tailwind lg）。 */
+/**
+ * 结构面板以固定栏形式展示的断点（T5.5：768–1280 平板两栏 = 结构 + 主区，助手走抽屉）。
+ * <p>
+ * 对应 Tailwind md；组件里不要再依赖 lg 判断结构栏可见性。
+ */
 export function useIsStructureInline(): boolean {
-    return useMediaQuery("(min-width: 1024px)");
+    return useMediaQuery("(min-width: 768px)");
 }
 
 /** 助手面板以固定栏形式展示的断点（Tailwind xl）。 */

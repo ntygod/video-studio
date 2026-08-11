@@ -1,20 +1,32 @@
 "use client";
 
-import { App, Button, Tag } from "antd";
 import { Check, GitPullRequestArrow, X } from "lucide-react";
 
 import { artifactKindLabel } from "@/features/workspace/lib/labels";
-import type { Proposal } from "@/services/api";
+import type { Proposal, ProposalOperation } from "@/services/api";
 import { useAcceptProposal, useRejectProposal } from "@/services/queries";
+import { Button, Surface, Tag, Text, useApp } from "@/shared/ui";
+
+/**
+ * 单条 operation 的简短标签。
+ * <p>
+ * 稿件提案是 JSON Patch（有 path），结构提案是 {action, unit_id}（没有 path），
+ * 两者要分别取值，否则结构提案会渲染成一串 undefined。
+ */
+function operationLabel(operation: ProposalOperation): string {
+    if (operation.path) return operation.path;
+    const structure = operation as unknown as { action?: string; unit_id?: string };
+    return structure.action ? `${structure.action} ${structure.unit_id || ""}`.trim() : "变更";
+}
 
 /**
  * 待处理的 AI 变更提案。
  * <p>
- * AI 不能直接改项目，只能提案；用户采纳后才会生成新的 artifact 版本。
- * P1 会把它移进对话流里并支持逐条勾选操作，这里先保持整份采纳/拒绝。
+ * AI 不能直接覆盖已有内容，只能提案；用户采纳后才会生成新的 artifact 版本
+ * 或落地结构变更。逐条勾选采纳在对话内的 ProposalCard 里。
  */
 export function ProposalList({ projectId, proposals }: { projectId: string; proposals: Proposal[] }) {
-    const { message } = App.useApp();
+    const { message } = useApp();
     const acceptProposal = useAcceptProposal(projectId);
     const rejectProposal = useRejectProposal(projectId);
 
@@ -37,29 +49,34 @@ export function ProposalList({ projectId, proposals }: { projectId: string; prop
           : null;
 
     return (
-        <section className="rounded-lg border border-[var(--studio-action-line)] bg-[var(--studio-action-soft)] p-4">
-            <h2 className="flex items-center gap-2 text-[13px] font-semibold text-[var(--studio-ink)]">
+        <Surface as="section" level="panel" radius="md" lift hairlineStrong className="p-4">
+            <Text as="h2" variant="body" tone="ink" weight={600} className="flex items-center gap-2">
                 <GitPullRequestArrow className="size-4" />
                 AI 修改建议
-                <span className="text-[11px] font-normal text-[var(--studio-muted)]">{proposals.length} 条待处理</span>
-            </h2>
+                <span className="text-caption font-normal text-[var(--s-muted)]">{proposals.length} 条待处理</span>
+            </Text>
 
             <div className="mt-3 space-y-2">
                 {proposals.map((proposal) => (
                     <article
                         key={proposal.id}
-                        className="rounded-md border border-[var(--studio-line)] bg-[var(--studio-surface)] p-3"
+                        className="rounded-[var(--r-sm)] border border-[var(--hairline)] bg-[var(--s-raised)] p-3"
                     >
                         <div className="flex flex-wrap items-start justify-between gap-2">
                             <div className="min-w-0">
-                                <h3 className="text-[13px] font-medium text-[var(--studio-ink)]">{proposal.title}</h3>
-                                <p className="mt-1 text-[11px] leading-5 text-[var(--studio-muted)]">
+                                <Text as="h3" variant="body" tone="ink" weight={500}>
+                                    {proposal.title}
+                                </Text>
+                                <Text as="p" variant="caption" tone="muted" className="mt-1 leading-5">
                                     {proposal.rationale || "AI 建议调整当前内容"}
-                                </p>
+                                </Text>
                                 {proposal.operations.length ? (
-                                    <p className="mt-1.5 text-[10px] text-[var(--studio-faint)]">
+                                    <p className="mt-1.5 text-caption text-[var(--s-faint)]">
                                         影响 {proposal.operations.length} 处：
-                                        {proposal.operations.slice(0, 3).map((op) => op.path).join("、")}
+                                        {proposal.operations
+                                            .slice(0, 3)
+                                            .map(operationLabel)
+                                            .join("、")}
                                         {proposal.operations.length > 3 ? " …" : ""}
                                     </p>
                                 ) : null}
@@ -69,8 +86,8 @@ export function ProposalList({ projectId, proposals }: { projectId: string; prop
 
                         <div className="mt-3 flex gap-2">
                             <Button
-                                size="small"
-                                type="primary"
+                                size="sm"
+                                variant="primary"
                                 icon={<Check className="size-3.5" />}
                                 loading={busyId === proposal.id && acceptProposal.isPending}
                                 onClick={() => void decide(proposal, "accept")}
@@ -78,7 +95,7 @@ export function ProposalList({ projectId, proposals }: { projectId: string; prop
                                 采用建议
                             </Button>
                             <Button
-                                size="small"
+                                size="sm"
                                 icon={<X className="size-3.5" />}
                                 loading={busyId === proposal.id && rejectProposal.isPending}
                                 onClick={() => void decide(proposal, "reject")}
@@ -89,6 +106,6 @@ export function ProposalList({ projectId, proposals }: { projectId: string; prop
                     </article>
                 ))}
             </div>
-        </section>
+        </Surface>
     );
 }

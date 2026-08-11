@@ -1,11 +1,11 @@
 "use client";
 
-import { Drawer } from "antd";
 import Link from "next/link";
 
 import { ThemePreferenceMenu } from "@/features/theme/components/theme-preference-menu";
 import { NAV_GROUPS, navigationTools, type NavigationToolSlug } from "@/shared/constants/navigation-tools";
 import { cn } from "@/shared/lib/utils";
+import { Drawer, Text } from "@/shared/ui";
 
 type MobileNavDrawerProps = {
     open: boolean;
@@ -22,7 +22,9 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDraw
                     if (!tools.length) return null;
                     return (
                         <section key={group.key}>
-                            <div className="mb-2 px-1 text-xs font-medium text-[var(--studio-faint)]">{group.label}</div>
+                            <Text variant="label" tone="faint" className="mb-2 px-1">
+                                {group.label}
+                            </Text>
                             <div className="grid grid-cols-2 gap-2">
                                 {tools.map((tool) => {
                                     const Icon = tool.icon;
@@ -33,14 +35,20 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDraw
                                             href={tool.slug === "home" ? "/" : "/" + tool.slug}
                                             onClick={onClose}
                                             className={cn(
-                                                "flex min-h-20 flex-col justify-between rounded-lg border p-3 transition-colors",
+                                                "relative flex min-h-20 flex-col justify-between rounded-[var(--r-md)] p-3 transition-colors",
                                                 active
-                                                    ? "border-[var(--studio-action-line)] bg-[var(--studio-action-soft)] font-medium text-[var(--studio-ink)]"
-                                                    : "border-[var(--studio-line)] bg-[var(--studio-surface-raised)] text-[var(--studio-muted)] hover:bg-[var(--studio-surface-hover)] hover:text-[var(--studio-ink)]",
+                                                    ? "bg-[var(--s-raised)] font-medium text-[var(--s-ink)]"
+                                                    : "border-[var(--hairline)] bg-[var(--s-raised)] text-[var(--s-muted)] hover:bg-[var(--s-raised)] hover:text-[var(--s-ink)]",
                                             )}
                                         >
+                                            {active ? (
+                                                <span
+                                                    aria-hidden
+                                                    className="absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-[var(--s-action)]"
+                                                />
+                                            ) : null}
                                             <Icon className="size-5" />
-                                            <span className="text-sm">{tool.label}</span>
+                                            <Text variant="body">{tool.label}</Text>
                                         </Link>
                                     );
                                 })}
@@ -48,12 +56,13 @@ export function MobileNavDrawer({ open, activeToolSlug, onClose }: MobileNavDraw
                         </section>
                     );
                 })}
-                <section className="border-t border-[var(--studio-line)] pt-5">
-                    <div className="mb-2 px-1 text-xs font-medium text-[var(--studio-faint)]">界面主题</div>
+                <section className="border-t border-[var(--hairline)] pt-5">
+                    <Text variant="label" tone="faint" className="mb-2 px-1">
+                        界面主题
+                    </Text>
                     <ThemePreferenceMenu variant="drawer" onAfterSelect={onClose} />
                 </section>
             </div>
         </Drawer>
     );
 }
-

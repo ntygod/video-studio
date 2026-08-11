@@ -9,9 +9,9 @@ removed.
 from fastapi import FastAPI
 
 from .api.errors import install_error_handlers
+from .api.logging import install_request_logging
 from .api.routes import routers
 from .application.providers import import_provider_file_once
-from .application.workflows import seed_workflows
 from .settings import Settings, settings as default_settings
 from .store import Database, UnitOfWork
 from .store.media_store import MediaStore
@@ -22,11 +22,10 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:
     config.ensure_directories()
     database = Database(config.resolved_database_url())
     database.create_schema()
-    media_store = MediaStore(config.media_dir)
+    media_store = MediaStore(config.media_dir, ffmpeg_path=config.ffmpeg_path, ffprobe_path=config.ffprobe_path)
 
     with UnitOfWork(database) as uow:
         import_provider_file_once(uow, config.data_dir / "providers.json")
-        seed_workflows(uow)
 
     app = FastAPI(
         title=config.app_name,
@@ -37,6 +36,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:
     app.state.database = database
     app.state.media_store = media_store
     install_error_handlers(app)
+    install_request_logging(app)
     for router in routers:
         app.include_router(router)
     return app

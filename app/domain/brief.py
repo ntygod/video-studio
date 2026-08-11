@@ -1,4 +1,6 @@
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 class DomainModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -37,3 +39,33 @@ class CreativeBrief(DomainModel):
     constraints: list[Constraint] = Field(default_factory=list)
     custom_fields: dict = Field(default_factory=dict)
     approved: bool = False
+
+    @field_validator("platforms", mode="before")
+    @classmethod
+    def _coerce_platforms(cls, value: Any) -> Any:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [{"platform": value}]
+        if isinstance(value, list):
+            return [
+                item if isinstance(item, dict) else {"platform": str(item)}
+                for item in value
+            ]
+        return value
+
+    @field_validator("constraints", mode="before")
+    @classmethod
+    def _coerce_constraints(cls, value: Any) -> Any:
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [{"kind": "custom", "value": value}]
+        if isinstance(value, list):
+            return [
+                item
+                if isinstance(item, dict)
+                else {"kind": "custom", "value": str(item)}
+                for item in value
+            ]
+        return value

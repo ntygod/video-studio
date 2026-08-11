@@ -1,10 +1,24 @@
 "use client";
 
 import { get, post, seg } from "./http";
-import type { Job, JobDetail } from "./types";
+import type { Job, JobDetail, Page } from "./types";
 
-export function listJobs(projectId?: string) {
-    return get<Job[]>("/api/jobs", { project_id: projectId });
+export function listJobsPage(
+    params: { project_id?: string | null; status?: string | null; limit?: number; cursor?: string | null } = {},
+) {
+    return get<Page<Job>>("/api/jobs", params);
+}
+
+/** 任务列表（分页行走）。 */
+export async function listJobs(projectId?: string): Promise<Job[]> {
+    const items: Job[] = [];
+    let cursor: string | null = null;
+    do {
+        const page = await listJobsPage({ project_id: projectId, limit: 200, cursor });
+        items.push(...page.items);
+        cursor = page.next_cursor;
+    } while (cursor);
+    return items;
 }
 
 export function getJob(id: string) {

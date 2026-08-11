@@ -34,6 +34,101 @@ class Database:
         from . import models  # noqa: F401
 
         Base.metadata.create_all(self.engine)
+        if str(self.engine.url).startswith("sqlite"):
+            self._ensure_model_default_column()
+            self._create_fts()
+
+    def _ensure_model_default_column(self) -> None:
+        """旧库补 is_default 列（SQLite 不支持 CREATE OR ALTER，按 PRAGMA 探测）。"""
+        with self.engine.begin() as conn:
+            columns = {
+                row[1]
+                for row in conn.execute(text("PRAGMA table_info(model_profiles)"))
+            }
+            if "is_default" not in columns:
+                conn.execute(
+                    text(
+                        "ALTER TABLE model_profiles "
+                        "ADD COLUMN is_default BOOLEAN NOT NULL DEFAULT 0"
+                    )
+                )
+
+    def _create_fts(self) -> None:
+        """FTS5 虚拟表 + 同步触发器（T3.2）。trigram 分词器面向中文。"""
+        with self.engine.begin() as conn:
+            conn.execute(
+                text(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS units_fts USING fts5("
+                    "unit_id UNINDEXED, project_id UNINDEXED, title, summary, continuity_summary,"
+                    "tokenize='trigram')"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS artifacts_fts USING fts5("
+                    "artifact_id UNINDEXED, project_id UNINDEXED, unit_id UNINDEXED, name, body,"
+                    "tokenize='trigram')"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE TRIGGER IF NOT EXISTS trg_units_fts_insert "
+                    "AFTER INSERT ON creative_units BEGIN "
+                    "INSERT INTO units_fts(unit_id, project_id, title, summary, continuity_summary) "
+                    "VALUES (new.id, new.project_id, new.title, new.summary, new.continuity_summary); END"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE TRIGGER IF NOT EXISTS trg_units_fts_update "
+                    "AFTER UPDATE ON creative_units BEGIN "
+                    "DELETE FROM units_fts WHERE unit_id = old.id; "
+                    "INSERT INTO units_fts(unit_id, project_id, title, summary, continuity_summary) "
+                    "VALUES (new.id, new.project_id, new.title, new.summary, new.continuity_summary); END"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE TRIGGER IF NOT EXISTS trg_units_fts_delete "
+                    "AFTER DELETE ON creative_units BEGIN "
+                    "DELETE FROM units_fts WHERE unit_id = old.id; END"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE TRIGGER IF NOT EXISTS trg_artifacts_fts_insert "
+                    "AFTER INSERT ON artifacts BEGIN "
+                    "INSERT INTO artifacts_fts(artifact_id, project_id, unit_id, name, body) "
+                    "VALUES (new.id, new.project_id, new.unit_id, new.name, ''); END"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE TRIGGER IF NOT EXISTS trg_artifacts_fts_update "
+                    "AFTER UPDATE OF current_version_id, name, unit_id ON artifacts BEGIN "
+                    "DELETE FROM artifacts_fts WHERE artifact_id = new.id; "
+                    "INSERT INTO artifacts_fts(artifact_id, project_id, unit_id, name, body) "
+                    "SELECT new.id, new.project_id, new.unit_id, new.name, "
+                    "COALESCE((SELECT payload_json FROM artifact_versions WHERE id = new.current_version_id), ''); END"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE TRIGGER IF NOT EXISTS trg_artifacts_fts_delete "
+                    "AFTER DELETE ON artifacts BEGIN "
+                    "DELETE FROM artifacts_fts WHERE artifact_id = old.id; END"
+                )
+            )
+            conn.execute(
+                text(
+                    "CREATE TRIGGER IF NOT EXISTS trg_artifact_versions_fts_update "
+                    "AFTER UPDATE OF payload_json ON artifact_versions BEGIN "
+                    "DELETE FROM artifacts_fts WHERE artifact_id = new.artifact_id; "
+                    "INSERT INTO artifacts_fts(artifact_id, project_id, unit_id, name, body) "
+                    "SELECT a.id, a.project_id, a.unit_id, a.name, new.payload_json "
+                    "FROM artifacts a WHERE a.id = new.artifact_id; END"
+                )
+            )
 
     @contextmanager
     def session(self):
