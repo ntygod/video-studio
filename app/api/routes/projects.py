@@ -5,11 +5,8 @@ from pydantic import BaseModel, Field
 
 from app.api.command_context import command_context
 from app.application.commands import (
-    CreateProjectCommand,
-    CreateUnitsCommand,
-    DeleteProjectCommand,
-    PatchProjectCommand,
-    PatchUnitCommand,
+    CreateProjectCommand, CreateUnitsCommand, DeleteProjectCommand,
+    DeleteUnitSubtreeCommand, PatchProjectCommand, PatchUnitCommand,
     get_command_bus,
 )
 from app.store import UnitOfWork
@@ -44,23 +41,14 @@ class UnitCreate(BaseModel):
 
 
 class UnitsCreate(BaseModel):
-    units: list[UnitCreate] = Field(
-        min_length=1,
-        max_length=500,
-    )
+    units: list[UnitCreate] = Field(min_length=1, max_length=500)
 
 
 @router.get("")
 def list_projects(request: Request):
     with UnitOfWork(request.app.state.database) as uow:
-        projects = [
-            item.model_dump(mode="json")
-            for item in uow.projects.list()
-        ]
-        summaries = {
-            item["id"]: item
-            for item in uow.projects.summaries()
-        }
+        projects = [item.model_dump(mode="json") for item in uow.projects.list()]
+        summaries = {item["id"]: item for item in uow.projects.summaries()}
         for project in projects:
             project.update(summaries.get(project["id"], {}))
         return projects
@@ -69,8 +57,7 @@ def list_projects(request: Request):
 @router.post("", status_code=201)
 def post_project(data: ProjectCreate, request: Request):
     return get_command_bus(request.app).execute(
-        CreateProjectCommand(**data.model_dump()),
-        command_context(request),
+        CreateProjectCommand(**data.model_dump()), command_context(request)
     ).result
 
 
@@ -78,18 +65,11 @@ def post_project(data: ProjectCreate, request: Request):
 def get_project(project_id: str, request: Request):
     with UnitOfWork(request.app.state.database) as uow:
         project = uow.projects.get(project_id)
-        return {
-            **project.model_dump(mode="json"),
-            **uow.projects.stats(project_id),
-        }
+        return {**project.model_dump(mode="json"), **uow.projects.stats(project_id)}
 
 
 @router.patch("/{project_id}")
-def patch_project_route(
-    project_id: str,
-    data: ProjectPatch,
-    request: Request,
-):
+def patch_project_route(project_id: str, data: ProjectPatch, request: Request):
     return get_command_bus(request.app).execute(
         PatchProjectCommand(
             project_id=project_id,
@@ -137,50 +117,33 @@ def list_units(
 
 
 @router.post("/{project_id}/units", status_code=201)
-def post_units(
-    project_id: str,
-    data: UnitsCreate,
-    request: Request,
-):
+def post_units(project_id: str, data: UnitsCreate, request: Request):
     definitions = []
     for index, unit in enumerate(data.units):
         payload = unit.model_dump(exclude_none=True)
         payload.setdefault("order_index", float(index))
         definitions.append(payload)
     return get_command_bus(request.app).execute(
-        CreateUnitsCommand(
-            project_id=project_id,
-            definitions=definitions,
-        ),
+        CreateUnitsCommand(project_id=project_id, definitions=definitions),
         command_context(request),
     ).result
 
 
 @router.get("/{project_id}/units/{unit_id}")
-def get_unit(
-    project_id: str,
-    unit_id: str,
-    request: Request,
-):
+def get_unit(project_id: str, unit_id: str, request: Request):
     with UnitOfWork(request.app.state.database) as uow:
         unit = uow.units.get(unit_id)
         if unit.project_id != project_id:
             from app.store.repositories import NotFoundError
-
             raise NotFoundError(unit_id)
         return {
             **unit.model_dump(mode="json"),
             "children": [
                 item.model_dump(mode="json")
-                for item in uow.units.list(
-                    project_id,
-                    parent_id=unit_id,
-                )
+                for item in uow.units.list(project_id, parent_id=unit_id)
             ],
             "artifacts": uow.artifacts.list(
-                project_id,
-                unit_id=unit_id,
-                include_payload=False,
+                project_id, unit_id=unit_id, include_payload=False
             ),
         }
 
@@ -209,17 +172,17 @@ def delete_unit(
     project_id: str,
     unit_id: str,
     request: Request,
+    expected_updated_at: float | None = None,
 ):
-    # Cascading unit deletion needs a subtree snapshot before it can gain a
-    # safe inverse operation. Keep it outside CommandBus until that exists.
-    with UnitOfWork(request.app.state.database) as uow:
-        unit = uow.units.get(unit_id)
-        if unit.project_id != project_id:
-            from app.store.repositories import NotFoundError
-
-            raise NotFoundError(unit_id)
-        uow.units.delete(unit_id)
-    return {"ok": True}
+    return get_command_bus(request.app).execute(
+        DeleteUnitSubtreeCommand(
+            project_id=project_id,
+            unit_id=unit_id,
+            media_store=request.app.state.media_store,
+            expected_updated_at=expected_updated_at,
+        ),
+        command_context(request),
+    ).result
 
 
 @router.get("/{project_id}/search")
@@ -232,9 +195,4 @@ def search_project(
 ):
     with UnitOfWork(request.app.state.database) as uow:
         uow.projects.get(project_id)
-        return uow.search.search(
-            project_id,
-            q,
-            kind=type,
-            limit=limit,
-        )
+        return uow.search.search(project_id, q, kind=type, limit=limit)

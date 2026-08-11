@@ -14,13 +14,12 @@ def recover_interrupted_operations(database, media_store=None) -> int:
         if media_store is not None:
             try:
                 if operation["operation_type"] in {
-                    "asset.upload",
-                    "asset.generated.persist",
+                    "asset.upload", "asset.generated.persist",
                     "asset.generated-file.persist",
                 }:
                     media_store.cleanup_operation_files(operation["id"])
                 elif operation["operation_type"] in {
-                    "asset.delete", "project.delete",
+                    "asset.delete", "project.delete", "unit.delete",
                 }:
                     media_store.restore_operation_quarantine(operation["id"])
             except Exception as exc:
