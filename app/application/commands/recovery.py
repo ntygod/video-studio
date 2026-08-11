@@ -26,7 +26,10 @@ def recover_interrupted_operations(
             try:
                 if operation["operation_type"] == "asset.upload":
                     media_store.cleanup_operation_files(operation["id"])
-                elif operation["operation_type"] == "asset.delete":
+                elif operation["operation_type"] in {
+                    "asset.delete",
+                    "project.delete",
+                }:
                     media_store.restore_operation_quarantine(
                         operation["id"]
                     )

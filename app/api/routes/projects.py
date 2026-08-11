@@ -7,6 +7,7 @@ from app.api.command_context import command_context
 from app.application.commands import (
     CreateProjectCommand,
     CreateUnitsCommand,
+    DeleteProjectCommand,
     PatchProjectCommand,
     PatchUnitCommand,
     get_command_bus,
@@ -61,9 +62,7 @@ def list_projects(request: Request):
             for item in uow.projects.summaries()
         }
         for project in projects:
-            project.update(
-                summaries.get(project["id"], {})
-            )
+            project.update(summaries.get(project["id"], {}))
         return projects
 
 
@@ -77,7 +76,6 @@ def post_project(data: ProjectCreate, request: Request):
 
 @router.get("/{project_id}")
 def get_project(project_id: str, request: Request):
-    """Return project state and aggregate counts."""
     with UnitOfWork(request.app.state.database) as uow:
         project = uow.projects.get(project_id)
         return {
@@ -103,13 +101,19 @@ def patch_project_route(
 
 
 @router.delete("/{project_id}")
-def delete_project(project_id: str, request: Request):
-    # Database deletion and media-directory deletion are not yet one durable
-    # operation. Keep the existing path until compensation is implemented.
-    with UnitOfWork(request.app.state.database) as uow:
-        uow.projects.delete(project_id)
-    request.app.state.media_store.delete_project(project_id)
-    return {"ok": True}
+def delete_project(
+    project_id: str,
+    request: Request,
+    expected_revision: int | None = None,
+):
+    return get_command_bus(request.app).execute(
+        DeleteProjectCommand(
+            project_id=project_id,
+            media_store=request.app.state.media_store,
+            expected_revision=expected_revision,
+        ),
+        command_context(request),
+    ).result
 
 
 @router.get("/{project_id}/units")

@@ -18,6 +18,7 @@ from .base import (
     OperationExecution,
     get_command_bus,
 )
+from .deletions import DeleteProjectCommand
 from .inverse import RevertOperationCommand
 from .jobs import CreateJobCommand
 from .projects import (
@@ -52,6 +53,7 @@ __all__ = [
     "CreateUnitsCommand",
     "CreateUploadedAssetCommand",
     "DeleteAssetCommand",
+    "DeleteProjectCommand",
     "MAX_UPLOAD_BYTES",
     "OperationExecution",
     "PatchAssetScopeCommand",
