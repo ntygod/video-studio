@@ -8,9 +8,16 @@ import { UnitCreateModal } from "@/features/structure/components/unit-create-mod
 import { UnitTree } from "@/features/structure/components/unit-tree";
 import { useWorkspaceData, type UnitNode } from "@/features/workspace/hooks/use-workspace-data";
 import { useWorkspaceRoute } from "@/features/workspace/hooks/use-workspace-route";
+import { freshnessByUnit } from "@/features/workspace/lib/freshness";
 import { isContentArtifactKind, unitKindLabel } from "@/features/workspace/lib/labels";
 import { useWorkspaceStore } from "@/features/workspace/stores/use-workspace-store";
-import { useAssets, useDeleteUnit, useSearch, useUpdateUnit } from "@/services/queries";
+import {
+    useAssets,
+    useDeleteUnit,
+    useProjectArtifactFreshness,
+    useSearch,
+    useUpdateUnit,
+} from "@/services/queries";
 import { type CompletionTriple } from "@/shared/ui/indicators";
 import { Button, Input, Select, Text, Tooltip, useApp } from "@/shared/ui";
 import { cn } from "@/shared/lib/utils";
@@ -31,10 +38,11 @@ function filterTree(nodes: UnitNode[], keep: (node: UnitNode) => boolean): UnitN
         .filter((node): node is UnitNode => node !== null);
 }
 
-type FilterKey = "all" | "incomplete" | "proposals" | "locked";
+type FilterKey = "all" | "attention" | "incomplete" | "proposals" | "locked";
 
 const FILTERS: Array<{ key: FilterKey; label: string }> = [
     { key: "all", label: "全部" },
+    { key: "attention", label: "需处理" },
     { key: "incomplete", label: "未完成" },
     { key: "proposals", label: "有提案" },
     { key: "locked", label: "已锁定" },
@@ -43,16 +51,17 @@ const FILTERS: Array<{ key: FilterKey; label: string }> = [
 /**
  * 左侧结构导航（T3.F2 增强）。
  * <p>
- * 单元树虚拟化；支持筛选（未完成/有提案/已锁定/类型）、FTS 搜索、
+ * 单元树虚拟化；支持筛选（需处理/未完成/有提案/已锁定/类型）、FTS 搜索、
  * 拖拽重排与改父级、Ctrl/Shift 多选后批量交给 Agent。
  */
 export function StructurePanel() {
     const { message } = useApp();
-    const { projectId, selectedUnitId, setSelectedUnit, hrefFor } = useWorkspaceRoute();
+    const { projectId, selectedUnitId, setSelectedUnit } = useWorkspaceRoute();
     const { project, units, unitTree, unitOptions, artifacts, pendingProposals } = useWorkspaceData();
 
     // 完成度需要项目全域的素材，与画布里按单元过滤的那份是不同的 query key。
     const allAssets = useAssets(projectId, null);
+    const freshnessQuery = useProjectArtifactFreshness(projectId);
     const deleteUnit = useDeleteUnit(projectId);
     const updateUnit = useUpdateUnit(projectId);
     const pushContextRefs = useWorkspaceStore((state) => state.pushContextRefs);
@@ -88,6 +97,11 @@ export function StructurePanel() {
         return ids;
     }, [artifacts]);
 
+    const unitFreshness = useMemo(
+        () => freshnessByUnit(freshnessQuery.data?.items || []),
+        [freshnessQuery.data?.items],
+    );
+
     const assetUnitIds = useMemo(() => {
         const media = new Set<string>();
         const renders = new Set<string>();
@@ -114,9 +128,16 @@ export function StructurePanel() {
 
     const proposalCountOf = useCallback((unitId: string) => proposalCounts.get(unitId) || 0, [proposalCounts]);
 
+    const freshnessOf = useCallback(
+        (unitId: string) => unitFreshness.get(unitId) || null,
+        [unitFreshness],
+    );
+
     const visibleTree = useMemo(() => {
         let tree = unitTree;
-        if (filter === "incomplete") {
+        if (filter === "attention") {
+            tree = filterTree(tree, (node) => unitFreshness.has(node.id));
+        } else if (filter === "incomplete") {
             tree = filterTree(tree, (node) => !isComplete(completionOf(node.id)));
         } else if (filter === "proposals") {
             tree = filterTree(tree, (node) => proposalCountOf(node.id) > 0);
@@ -127,7 +148,7 @@ export function StructurePanel() {
             tree = filterTree(tree, (node) => node.unit_type === typeFilter);
         }
         return tree;
-    }, [unitTree, filter, typeFilter, completionOf, proposalCountOf, lockedUnitIds]);
+    }, [unitTree, filter, typeFilter, completionOf, proposalCountOf, lockedUnitIds, unitFreshness]);
 
     const searching = keyword.trim().length > 0;
     const searchHits = searching ? searchQuery.data || [] : [];
@@ -300,6 +321,7 @@ export function StructurePanel() {
                         collapsedIds={collapsedIds}
                         completionOf={completionOf}
                         proposalCountOf={proposalCountOf}
+                        freshnessOf={freshnessOf}
                         multiSelectedIds={multiSelectedIds}
                         onSelect={setSelectedUnit}
                         onToggleMultiSelect={toggleMultiSelect}

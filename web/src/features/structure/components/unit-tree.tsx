@@ -6,9 +6,13 @@ import { ChevronRight, Layers3, Trash2 } from "lucide-react";
 
 import type { UnitNode } from "@/features/workspace/hooks/use-workspace-data";
 import { flattenUnitTree } from "@/features/workspace/hooks/use-workspace-data";
+import {
+    freshnessMeta,
+    type UnitFreshnessSummary,
+} from "@/features/workspace/lib/freshness";
 import { unitKindLabel } from "@/features/workspace/lib/labels";
 import { CompletionDots, type CompletionTriple } from "@/shared/ui/indicators";
-import { Popconfirm, Tooltip } from "@/shared/ui";
+import { Popconfirm, StatusDot, Tooltip } from "@/shared/ui";
 import { cn } from "@/shared/lib/utils";
 
 export type UnitTreeProps = {
@@ -19,6 +23,10 @@ export type UnitTreeProps = {
     completionOf: (unitId: string) => CompletionTriple;
     /** 每个单元的待处理提案数。 */
     proposalCountOf: (unitId: string) => number;
+    /** 单元内最严重的过期/阻塞状态。 */
+    freshnessOf?: (
+        unitId: string,
+    ) => UnitFreshnessSummary | null;
     /** 多选集合（Ctrl/Shift 点选）。 */
     multiSelectedIds: Set<string>;
     onSelect: (unitId: string | null) => void;
@@ -42,6 +50,7 @@ function UnitRow({
     collapsed,
     completion,
     proposalCount,
+    freshness,
     dropState,
     onSelect,
     onToggleMultiSelect,
@@ -60,6 +69,7 @@ function UnitRow({
     collapsed: boolean;
     completion: CompletionTriple;
     proposalCount: number;
+    freshness: UnitFreshnessSummary | null;
     dropState: DropState;
     onSelect: () => void;
     onToggleMultiSelect: () => void;
@@ -74,6 +84,9 @@ function UnitRow({
 }) {
     const hasChildren = node.children.length > 0;
     const drop = dropState?.targetId === node.id ? dropState.position : null;
+    const statusMeta = freshness
+        ? freshnessMeta(freshness.status)
+        : null;
 
     return (
         <div
@@ -145,6 +158,16 @@ function UnitRow({
                     </span>
                 </span>
 
+                {freshness && statusMeta ? (
+                    <Tooltip
+                        title={`${statusMeta.label} · ${freshness.count} 份内容`}
+                    >
+                        <span className="inline-flex shrink-0 items-center gap-1 text-caption text-[var(--s-faint)]">
+                            <StatusDot tone={statusMeta.dotTone} />
+                            {freshness.count}
+                        </span>
+                    </Tooltip>
+                ) : null}
                 <CompletionDots value={completion} className="shrink-0" />
             </button>
 
@@ -173,6 +196,7 @@ export function UnitTree({
     collapsedIds,
     completionOf,
     proposalCountOf,
+    freshnessOf = () => null,
     multiSelectedIds,
     onSelect,
     onToggleMultiSelect,
@@ -325,6 +349,7 @@ export function UnitTree({
                                     collapsed={collapsedIds.has(node.id)}
                                     completion={completionOf(node.id)}
                                     proposalCount={proposalCountOf(node.id)}
+                                    freshness={freshnessOf(node.id)}
                                     dropState={dropState}
                                     onSelect={() => onSelect(node.id)}
                                     onToggleMultiSelect={() => onToggleMultiSelect(node.id)}

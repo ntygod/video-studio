@@ -1,17 +1,46 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Check, FileText, Lock } from "lucide-react";
+import Link from "next/link";
 
 import { ArtifactEditorModal } from "@/features/canvas/components/artifact-editor-modal";
 import { StoryRenderer } from "@/features/canvas/story/renderers";
+import {
+    freshnessByArtifact,
+    freshnessMeta,
+    freshnessReason,
+} from "@/features/workspace/lib/freshness";
 import { artifactKindLabel, artifactStatusLabel } from "@/features/workspace/lib/labels";
 import { SCRATCH_DRAFT_KEY, useWorkspaceStore } from "@/features/workspace/stores/use-workspace-store";
 import type { Artifact } from "@/services/api";
-import { useApproveArtifactVersion, useLockArtifactVersion } from "@/services/queries";
+import {
+    useApproveArtifactVersion,
+    useLockArtifactVersion,
+    useProjectArtifactFreshness,
+} from "@/services/queries";
 import { useIsAgentInline } from "@/shared/hooks/use-media-query";
 import { cn } from "@/shared/lib/utils";
-import { Button, Surface, Tag, Text, Tooltip, useApp } from "@/shared/ui";
+import {
+    Button,
+    Chip,
+    StatusDot,
+    Surface,
+    Tag,
+    Text,
+    Tooltip,
+    useApp,
+} from "@/shared/ui";
+
+function versionsHref(
+    projectId: string,
+    artifactId: string,
+    unitId?: string | null,
+): string {
+    const query = new URLSearchParams({ artifact: artifactId });
+    if (unitId) query.set("unit", unitId);
+    return `/projects/${encodeURIComponent(projectId)}/versions?${query.toString()}`;
+}
 
 /**
  * 创作稿件列表与内容。
@@ -25,6 +54,11 @@ export function ArtifactPanel({ projectId, artifacts }: { projectId: string; art
 
     const approveVersion = useApproveArtifactVersion(projectId);
     const lockVersion = useLockArtifactVersion(projectId);
+    const freshnessQuery = useProjectArtifactFreshness(projectId);
+    const freshnessMap = useMemo(
+        () => freshnessByArtifact(freshnessQuery.data?.items || []),
+        [freshnessQuery.data?.items],
+    );
     const setComposerDraft = useWorkspaceStore((state) => state.setComposerDraft);
     const agentCollapsed = useWorkspaceStore((state) => state.agentCollapsed);
     const toggleAgent = useWorkspaceStore((state) => state.toggleAgent);
@@ -52,11 +86,23 @@ export function ArtifactPanel({ projectId, artifacts }: { projectId: string; art
     const selected = artifacts.find((item) => item.id === selectedId) || null;
     const version = selected?.current_version;
     const locked = version?.status === "locked";
+    const selectedFreshness = selected
+        ? freshnessMap.get(selected.id) || null
+        : null;
+    const invalidInputs =
+        selectedFreshness?.status === "stale" ||
+        selectedFreshness?.status === "blocked";
+    const statusDisabled = locked || invalidInputs;
+    const statusTooltip = locked
+        ? "已定稿的版本不能再改状态"
+        : invalidInputs
+          ? "当前结果的输入已过期或缺失，请先重新生成或修复依赖"
+          : undefined;
 
     if (!artifacts.length) return null;
 
     const changeStatus = async (action: "approve" | "lock") => {
-        if (!version) return;
+        if (!version || invalidInputs) return;
         try {
             if (action === "approve") await approveVersion.mutateAsync(version.id);
             else await lockVersion.mutateAsync(version.id);
@@ -81,41 +127,97 @@ export function ArtifactPanel({ projectId, artifacts }: { projectId: string; art
             </div>
 
             <div className="hide-scrollbar mt-4 flex gap-2 overflow-x-auto pb-1">
-                {artifacts.map((artifact) => (
-                    <button
-                        key={artifact.id}
-                        type="button"
-                        onClick={() => setSelectedId(artifact.id)}
-                        aria-pressed={selectedId === artifact.id}
-                        className={cn(
-                            "relative min-w-44 rounded-[var(--r-sm)] border px-3 py-2.5 text-left transition-colors",
-                            selectedId === artifact.id
-                                ? "border-[var(--hairline-strong)] bg-[var(--s-raised)]"
-                                : "border-[var(--hairline)] hover:bg-[var(--s-raised)]",
-                        )}
-                    >
-                        {selectedId === artifact.id ? (
-                            <span
-                                aria-hidden
-                                className="absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-[var(--s-action)]"
-                            />
-                        ) : null}
-                        <div className="flex items-center gap-2">
-                            <FileText className="size-4 shrink-0 text-[var(--s-faint)]" />
-                            <Text as="span" variant="body" tone="ink" weight={500} truncate>
-                                {artifact.name}
+                {artifacts.map((artifact) => {
+                    const itemFreshness = freshnessMap.get(artifact.id);
+                    const itemMeta = itemFreshness
+                        ? freshnessMeta(itemFreshness.status)
+                        : null;
+                    return (
+                        <button
+                            key={artifact.id}
+                            type="button"
+                            onClick={() => setSelectedId(artifact.id)}
+                            aria-pressed={selectedId === artifact.id}
+                            className={cn(
+                                "relative min-w-44 rounded-[var(--r-sm)] border px-3 py-2.5 text-left transition-colors",
+                                selectedId === artifact.id
+                                    ? "border-[var(--hairline-strong)] bg-[var(--s-raised)]"
+                                    : "border-[var(--hairline)] hover:bg-[var(--s-raised)]",
+                            )}
+                        >
+                            {selectedId === artifact.id ? (
+                                <span
+                                    aria-hidden
+                                    className="absolute left-0 top-1/2 h-4 w-0.5 -translate-y-1/2 rounded-full bg-[var(--s-action)]"
+                                />
+                            ) : null}
+                            <div className="flex items-center gap-2">
+                                <FileText className="size-4 shrink-0 text-[var(--s-faint)]" />
+                                <Text as="span" variant="body" tone="ink" weight={500} truncate>
+                                    {artifact.name}
+                                </Text>
+                            </div>
+                            <Text variant="caption" tone="faint" className="mt-1 block">
+                                {artifactKindLabel(artifact.kind)} · 第 {artifact.current_version?.version || 0} 版 ·{" "}
+                                {artifactStatusLabel(artifact.current_version?.status)}
                             </Text>
-                        </div>
-                        <Text variant="caption" tone="faint" className="mt-1 block">
-                            {artifactKindLabel(artifact.kind)} · 第 {artifact.current_version?.version || 0} 版 ·{" "}
-                            {artifactStatusLabel(artifact.current_version?.status)}
-                        </Text>
-                    </button>
-                ))}
+                            {itemFreshness && itemMeta ? (
+                                <Chip tone={itemMeta.tone} className="mt-1.5">
+                                    {itemMeta.shortLabel}
+                                </Chip>
+                            ) : null}
+                        </button>
+                    );
+                })}
             </div>
 
             {selected ? (
                 <div className="mt-4 border-t border-[var(--hairline)] pt-4">
+                    {selectedFreshness ? (
+                        <div className="mb-4 flex flex-wrap items-center gap-3 rounded-[var(--r-sm)] border border-[var(--hairline)] bg-[var(--s-raised)] px-3 py-2.5">
+                            <StatusDot
+                                tone={freshnessMeta(selectedFreshness.status).dotTone}
+                            />
+                            <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                    <Text
+                                        as="span"
+                                        variant="body"
+                                        tone="ink"
+                                        weight={600}
+                                    >
+                                        {freshnessMeta(selectedFreshness.status).label}
+                                    </Text>
+                                    <Chip
+                                        tone={freshnessMeta(selectedFreshness.status).tone}
+                                    >
+                                        {freshnessMeta(selectedFreshness.status).shortLabel}
+                                    </Chip>
+                                </div>
+                                <Text
+                                    as="p"
+                                    variant="caption"
+                                    tone="muted"
+                                    className="mt-0.5 leading-5"
+                                >
+                                    {freshnessReason(
+                                        selectedFreshness.status,
+                                        selectedFreshness.reason,
+                                    )}
+                                </Text>
+                            </div>
+                            <Link
+                                href={versionsHref(
+                                    projectId,
+                                    selected.id,
+                                    selected.unit_id,
+                                )}
+                            >
+                                <Button size="sm">查看版本</Button>
+                            </Link>
+                        </div>
+                    ) : null}
+
                     <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                         <div className="min-w-0">
                             <Text as="h3" variant="body" tone="ink" weight={600} truncate>
@@ -130,11 +232,11 @@ export function ArtifactPanel({ projectId, artifacts }: { projectId: string; art
                             <Button size="sm" icon={<FileText className="size-3.5" />} onClick={() => setEditorOpen(true)}>
                                 编辑源码
                             </Button>
-                            <Tooltip title={locked ? "已定稿的版本不能再改状态" : undefined}>
+                            <Tooltip title={statusTooltip}>
                                 <span>
                                     <Button
                                         size="sm"
-                                        disabled={locked}
+                                        disabled={statusDisabled}
                                         icon={<Check className="size-3.5" />}
                                         loading={approveVersion.isPending}
                                         onClick={() => void changeStatus("approve")}
@@ -143,11 +245,11 @@ export function ArtifactPanel({ projectId, artifacts }: { projectId: string; art
                                     </Button>
                                 </span>
                             </Tooltip>
-                            <Tooltip title={locked ? "已定稿" : "定稿后内容不再变动"}>
+                            <Tooltip title={locked ? "已定稿" : statusTooltip || "定稿后内容不再变动"}>
                                 <span>
                                     <Button
                                         size="sm"
-                                        disabled={locked}
+                                        disabled={statusDisabled}
                                         icon={<Lock className="size-3.5" />}
                                         loading={lockVersion.isPending}
                                         onClick={() => void changeStatus("lock")}
