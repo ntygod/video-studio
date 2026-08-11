@@ -2,37 +2,27 @@
 
 from app.store import UnitOfWork
 
-INTERRUPTED_OPERATION_ERROR = (
-    "operation interrupted before database commit"
-)
+INTERRUPTED_OPERATION_ERROR = "operation interrupted before database commit"
 
 
-def recover_interrupted_operations(
-    database,
-    media_store=None,
-) -> int:
-    """Compensate external staging, then fail inherited running operations."""
-
+def recover_interrupted_operations(database, media_store=None) -> int:
     with UnitOfWork(database) as uow:
-        operations = uow.operations.list(
-            status="running",
-            limit=500,
-        )
-
+        operations = uow.operations.list(status="running", limit=500)
     recovered = 0
     for operation in operations:
         error = INTERRUPTED_OPERATION_ERROR
         if media_store is not None:
             try:
-                if operation["operation_type"] == "asset.upload":
+                if operation["operation_type"] in {
+                    "asset.upload",
+                    "asset.generated.persist",
+                    "asset.generated-file.persist",
+                }:
                     media_store.cleanup_operation_files(operation["id"])
                 elif operation["operation_type"] in {
-                    "asset.delete",
-                    "project.delete",
+                    "asset.delete", "project.delete",
                 }:
-                    media_store.restore_operation_quarantine(
-                        operation["id"]
-                    )
+                    media_store.restore_operation_quarantine(operation["id"])
             except Exception as exc:
                 error += f"; external compensation failed: {exc}"
         with UnitOfWork(database) as uow:

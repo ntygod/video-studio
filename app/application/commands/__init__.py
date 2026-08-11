@@ -24,7 +24,11 @@ from .generated_artifacts import (
     PersistGeneratedArtifactCommand,
     generated_artifact_attempt,
 )
-from .generated_assets import PersistGeneratedAssetCommand
+from .generated_assets import (
+    PersistGeneratedAssetCommand,
+    PersistGeneratedFileAssetCommand,
+    job_asset_persistence_attempt,
+)
 from .inverse import RevertOperationCommand
 from .jobs import CreateJobCommand
 from .projects import (
@@ -43,35 +47,17 @@ from .recovery import recover_interrupted_operations
 from .timeline import CompileTimelineCommand
 
 __all__ = [
-    "AcceptProposalCommand",
-    "AddArtifactVersionCommand",
-    "CommandBus",
-    "CommandContext",
-    "CommandResult",
-    "CommandValidationError",
-    "CompileTimelineCommand",
-    "CreateArtifactChangeProposalCommand",
-    "CreateArtifactCommand",
-    "CreateAssetCommand",
-    "CreateBatchJobsCommand",
-    "CreateJobCommand",
-    "CreateProjectCommand",
-    "CreateStructureProposalCommand",
-    "CreateUnitsCommand",
-    "CreateUploadedAssetCommand",
-    "DeleteAssetCommand",
-    "DeleteProjectCommand",
-    "MAX_UPLOAD_BYTES",
-    "OperationExecution",
-    "PatchAssetScopeCommand",
-    "PatchProjectCommand",
-    "PatchUnitCommand",
-    "PersistGeneratedArtifactCommand",
-    "PersistGeneratedAssetCommand",
-    "RejectProposalCommand",
-    "RevertOperationCommand",
-    "SetArtifactVersionStatusCommand",
-    "generated_artifact_attempt",
-    "get_command_bus",
-    "recover_interrupted_operations",
+    "AcceptProposalCommand", "AddArtifactVersionCommand", "CommandBus",
+    "CommandContext", "CommandResult", "CommandValidationError",
+    "CompileTimelineCommand", "CreateArtifactChangeProposalCommand",
+    "CreateArtifactCommand", "CreateAssetCommand", "CreateBatchJobsCommand",
+    "CreateJobCommand", "CreateProjectCommand", "CreateStructureProposalCommand",
+    "CreateUnitsCommand", "CreateUploadedAssetCommand", "DeleteAssetCommand",
+    "DeleteProjectCommand", "MAX_UPLOAD_BYTES", "OperationExecution",
+    "PatchAssetScopeCommand", "PatchProjectCommand", "PatchUnitCommand",
+    "PersistGeneratedArtifactCommand", "PersistGeneratedAssetCommand",
+    "PersistGeneratedFileAssetCommand", "RejectProposalCommand",
+    "RevertOperationCommand", "SetArtifactVersionStatusCommand",
+    "generated_artifact_attempt", "get_command_bus",
+    "job_asset_persistence_attempt", "recover_interrupted_operations",
 ]

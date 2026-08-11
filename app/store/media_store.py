@@ -50,6 +50,17 @@ class MediaStore:
         )[:16]
         return f".{cleaned or 'bin'}"
 
+    @staticmethod
+    def _sha256_file(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as stream:
+            while True:
+                chunk = stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+        return digest.hexdigest()
+
     def write_bytes(
         self,
         project_id: str,
@@ -57,7 +68,6 @@ class MediaStore:
         suffix: str,
         unit_id: str | None = None,
     ) -> tuple[str, str]:
-        """写入文件并返回 (相对 uri, sha256)。"""
         folder = self.project_dir(project_id)
         if unit_id:
             folder = folder / unit_id
@@ -79,8 +89,6 @@ class MediaStore:
         operation_id: str,
         unit_id: str | None = None,
     ) -> tuple[str, str]:
-        """以 Operation ID 写入确定性文件，支持请求幂等与崩溃清理。"""
-
         operation_id = self._safe_operation_id(operation_id)
         folder = self.project_dir(project_id)
         if unit_id:
@@ -91,7 +99,7 @@ class MediaStore:
         target = folder / name
         digest = hashlib.sha256(data).hexdigest()
         if target.exists():
-            current = hashlib.sha256(target.read_bytes()).hexdigest()
+            current = self._sha256_file(target)
             if current != digest:
                 raise RuntimeError(
                     "operation media path already contains different bytes"
@@ -105,6 +113,38 @@ class MediaStore:
                 temp.unlink(missing_ok=True)
         relative = f"{project_id}/{unit_id}/" if unit_id else f"{project_id}/"
         return relative + name, digest
+
+    def adopt_operation_file(
+        self,
+        project_id: str,
+        source_uri: str,
+        operation_id: str,
+        unit_id: str | None = None,
+    ) -> tuple[str, str]:
+        """Move a newly generated file to an Operation-stable media URI."""
+
+        operation_id = self._safe_operation_id(operation_id)
+        source = self.path_for(source_uri)
+        if not source.is_file():
+            raise FileNotFoundError(source_uri)
+        suffix = self._safe_suffix(source.suffix)
+        folder = self.project_dir(project_id)
+        if unit_id:
+            folder = folder / unit_id
+            folder.mkdir(parents=True, exist_ok=True)
+        target = folder / f"{operation_id}{suffix}"
+        source_hash = self._sha256_file(source)
+        if source.resolve() != target.resolve():
+            if target.exists():
+                if self._sha256_file(target) != source_hash:
+                    raise RuntimeError(
+                        "operation target contains different generated media"
+                    )
+                source.unlink()
+            else:
+                os.replace(source, target)
+        relative = f"{project_id}/{unit_id}/" if unit_id else f"{project_id}/"
+        return relative + target.name, source_hash
 
     def _trash_dir(self, operation_id: str) -> Path:
         operation_id = self._safe_operation_id(operation_id)
@@ -124,11 +164,6 @@ class MediaStore:
         relative_uris: Iterable[str],
         operation_id: str,
     ) -> list[str]:
-        """把素材及已知派生预览原子移入 Operation 回收区。
-
-        回收区保留原相对目录结构，因此进程崩溃或数据库回滚后可无损恢复。
-        """
-
         operation_id = self._safe_operation_id(operation_id)
         candidates: set[str] = set()
         for raw_uri in relative_uris:
@@ -165,8 +200,6 @@ class MediaStore:
         self,
         operation_id: str,
     ) -> list[str]:
-        """恢复某个 Operation 隔离的全部文件。"""
-
         operation_id = self._safe_operation_id(operation_id)
         trash = self.root / ".trash" / operation_id
         if not trash.exists():
@@ -181,8 +214,8 @@ class MediaStore:
             target = self.path_for(relative.as_posix())
             target.parent.mkdir(parents=True, exist_ok=True)
             if target.exists():
-                source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
-                target_hash = hashlib.sha256(target.read_bytes()).hexdigest()
+                source_hash = self._sha256_file(source)
+                target_hash = self._sha256_file(target)
                 if source_hash != target_hash:
                     raise RuntimeError(
                         f"cannot restore over different media: {relative}"
@@ -208,8 +241,6 @@ class MediaStore:
         return restored
 
     def cleanup_operation_files(self, operation_id: str) -> list[str]:
-        """清理中断上传留下的确定性文件及其派生预览。"""
-
         operation_id = self._safe_operation_id(operation_id)
         removed: list[str] = []
         root = self.root.resolve()
@@ -237,8 +268,6 @@ class MediaStore:
 
     @staticmethod
     def _probe_image_header(path: Path) -> dict | None:
-        """从常见图片文件头读取尺寸，避免小图片依赖 ffprobe。"""
-
         with path.open("rb") as stream:
             header = stream.read(32)
             if (
@@ -259,22 +288,10 @@ class MediaStore:
                 }
             if header[:2] != b"\xff\xd8":
                 return None
-
             stream.seek(2)
             sof_markers = {
-                0xC0,
-                0xC1,
-                0xC2,
-                0xC3,
-                0xC5,
-                0xC6,
-                0xC7,
-                0xC9,
-                0xCA,
-                0xCB,
-                0xCD,
-                0xCE,
-                0xCF,
+                0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
+                0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF,
             }
             while True:
                 prefix = stream.read(1)
@@ -308,21 +325,13 @@ class MediaStore:
                 stream.seek(segment_length - 2, 1)
 
     def probe(self, relative_uri: str) -> dict:
-        """探测 width/height/duration/codec；图片优先走文件头，其余使用 ffprobe。"""
         path = self.path_for(relative_uri)
         image_meta = self._probe_image_header(path)
         if image_meta is not None:
             return image_meta
-
         command = [
-            self.ffprobe_path,
-            "-v",
-            "error",
-            "-print_format",
-            "json",
-            "-show_format",
-            "-show_streams",
-            str(path),
+            self.ffprobe_path, "-v", "error", "-print_format", "json",
+            "-show_format", "-show_streams", str(path),
         ]
         result = subprocess.run(command, capture_output=True, text=True, timeout=120)
         if result.returncode != 0:
@@ -353,73 +362,49 @@ class MediaStore:
         return meta
 
     def make_thumb(self, relative_uri: str, mime_type: str) -> str:
-        """图片缩放 640 长边；视频抽 1s 帧；音频算 200 点波形峰值存 JSON。"""
         source = self.path_for(relative_uri)
         if mime_type.startswith("image/"):
             thumb_uri = relative_uri + ".thumb.png"
             target = self.path_for(thumb_uri)
-            self._run_ffmpeg(
-                [
-                    "-y",
-                    "-i",
-                    str(source),
-                    "-vf",
-                    "scale='min(640,iw)':-1",
-                    "-frames:v",
-                    "1",
-                    str(target),
-                ]
-            )
+            self._run_ffmpeg([
+                "-y", "-i", str(source), "-vf",
+                "scale='min(640,iw)':-1", "-frames:v", "1", str(target),
+            ])
             return thumb_uri
         if mime_type.startswith("video/"):
             thumb_uri = relative_uri + ".thumb.jpg"
             target = self.path_for(thumb_uri)
-            self._run_ffmpeg(
-                [
-                    "-y",
-                    "-ss",
-                    "1",
-                    "-i",
-                    str(source),
-                    "-vf",
-                    "scale='min(640,iw)':-2",
-                    "-frames:v",
-                    "1",
-                    "-q:v",
-                    "4",
-                    str(target),
-                ]
-            )
+            self._run_ffmpeg([
+                "-y", "-ss", "1", "-i", str(source), "-vf",
+                "scale='min(640,iw)':-2", "-frames:v", "1",
+                "-q:v", "4", str(target),
+            ])
             return thumb_uri
         if mime_type.startswith("audio/"):
             wave_uri = relative_uri + ".wave.json"
             target = self.path_for(wave_uri)
-            peaks = self._audio_waveform(source)
-            target.write_text(json.dumps(peaks), encoding="utf-8")
+            target.write_text(
+                json.dumps(self._audio_waveform(source)),
+                encoding="utf-8",
+            )
             return wave_uri
         raise ValueError(f"unsupported thumb mime: {mime_type}")
 
     def _run_ffmpeg(self, args: list[str]) -> None:
         result = subprocess.run(
-            [self.ffmpeg_path, *args], capture_output=True, text=True, timeout=600
+            [self.ffmpeg_path, *args],
+            capture_output=True,
+            text=True,
+            timeout=600,
         )
         if result.returncode != 0:
             raise RuntimeError(f"ffmpeg failed: {result.stderr[-500:]}")
 
     def _audio_waveform(self, source: Path, bins: int = 200) -> list[float]:
-        """ffmpeg 解码为单声道 f32le，按 200 个 bin 取峰值，归一化到 0-1。"""
         result = subprocess.run(
             [
-                self.ffmpeg_path,
-                "-v",
-                "error",
-                "-i",
-                str(source),
-                "-ac",
-                "1",
-                "-f",
-                "f32le",
-                "-",
+                self.ffmpeg_path, "-v", "error", "-i", str(source),
+                "-ac", "1", "-f", "f32le", "-",
             ],
             capture_output=True,
             timeout=600,
@@ -428,7 +413,6 @@ class MediaStore:
             raise RuntimeError(f"ffmpeg decode failed: {result.stderr[-500:]}")
         raw = result.stdout[: 64 * 1024 * 1024]
         import struct
-
         count = len(raw) // 4
         if count < bins:
             return [0.0] * bins
@@ -444,7 +428,6 @@ class MediaStore:
 
     def delete_project(self, project_id: str) -> None:
         import shutil
-
         shutil.rmtree(self.root / project_id, ignore_errors=True)
 
     def delete_asset(self, uri: str) -> None:
@@ -456,5 +439,4 @@ class MediaStore:
             return
         path.unlink(missing_ok=True)
         for suffix in (".thumb.png", ".thumb.jpg", ".wave.json"):
-            extra = Path(str(path) + suffix)
-            extra.unlink(missing_ok=True)
+            Path(str(path) + suffix).unlink(missing_ok=True)
