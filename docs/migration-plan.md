@@ -57,6 +57,7 @@
 - [x] Artifact 创建、追加版本、恢复、批准、锁定已进入 CommandBus。
 - [x] 提案接受与拒绝已进入同一操作审计链。
 - [x] 暴露项目 OperationLog 查询 API。
+- [x] 应用启动时把上一进程遗留的 running Operation 标记为 interrupted/failed。
 - [ ] 项目、单元、资产、时间线编译和媒体写入迁入 CommandBus。
 - [ ] Agent 写工具只能调用 Command / Query API。
 - [ ] 实现 inverse operation 执行器；当前只持久化逆操作描述。

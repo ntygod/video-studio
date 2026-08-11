@@ -103,6 +103,20 @@ class OperationLogRepository:
         self.session.flush()
         return self._data(row)
 
+    def fail_running(self, error: str = "operation interrupted before commit") -> int:
+        rows = self.session.scalars(
+            select(OperationLogRow).where(OperationLogRow.status == "running")
+        ).all()
+        if not rows:
+            return 0
+        completed_at = time.time()
+        for row in rows:
+            row.status = "failed"
+            row.error = error
+            row.completed_at = completed_at
+        self.session.flush()
+        return len(rows)
+
     def list(self, project_id: str | None = None, *, status: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
         limit = max(1, min(int(limit), 500))
         query = select(OperationLogRow)
