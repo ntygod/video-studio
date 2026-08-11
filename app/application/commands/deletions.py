@@ -267,6 +267,7 @@ class DeleteUnitSubtreeCommand:
                 self.project_id,
                 unit_ids,
             )
+        )
         moved = self.media_store.quarantine_asset(
             media_uris,
             self._operation_id,
