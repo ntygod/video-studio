@@ -1,8 +1,8 @@
 from .artifact_repository import SchemaAwareArtifactRepository
+from .asset_repository import SemanticAssetRepository
 from .operation_repository import OperationLogRepository
 from .repositories import (
     AgentTurnRepository,
-    AssetRepository,
     ConversationRepository,
     JobRepository,
     ProjectRepository,
@@ -26,7 +26,7 @@ class UnitOfWork:
         self.artifacts = SchemaAwareArtifactRepository(self.session)
         self.proposals = ProposalRepository(self.session)
         self.providers = ProviderRepository(self.session)
-        self.assets = AssetRepository(self.session)
+        self.assets = SemanticAssetRepository(self.session)
         self.jobs = JobRepository(self.session)
         self.agent_turns = AgentTurnRepository(self.session)
         self.operations = OperationLogRepository(self.session)

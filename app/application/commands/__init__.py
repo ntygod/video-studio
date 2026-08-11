@@ -3,6 +3,7 @@ from .artifacts import (
     CreateArtifactCommand,
     SetArtifactVersionStatusCommand,
 )
+from .assets import CreateAssetCommand, PatchAssetScopeCommand
 from .base import (
     CommandBus,
     CommandContext,
@@ -31,9 +32,11 @@ __all__ = [
     "CommandResult",
     "CommandValidationError",
     "CreateArtifactCommand",
+    "CreateAssetCommand",
     "CreateProjectCommand",
     "CreateUnitsCommand",
     "OperationExecution",
+    "PatchAssetScopeCommand",
     "PatchProjectCommand",
     "PatchUnitCommand",
     "RejectProposalCommand",
