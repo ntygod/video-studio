@@ -33,11 +33,7 @@ def _job_context(job_id: str, key: str) -> CommandContext:
     )
 
 
-def test_regeneration_refreshes_inputs_and_appends_same_artifact(
-    app,
-    client,
-    project,
-):
+def _replayable_output(app, client, project):
     source = _artifact(
         client,
         project["id"],
@@ -45,7 +41,6 @@ def test_regeneration_refreshes_inputs_and_appends_same_artifact(
         "source-v1",
     )
     source_v1 = source["current_version"]["id"]
-
     with UnitOfWork(app.state.database) as uow:
         source_job = uow.jobs.create(
             {
@@ -64,7 +59,6 @@ def test_regeneration_refreshes_inputs_and_appends_same_artifact(
                 },
             }
         )
-
     output = CommandBus(app.state.database).execute(
         PersistGeneratedArtifactCommand(
             project_id=project["id"],
@@ -85,6 +79,19 @@ def test_regeneration_refreshes_inputs_and_appends_same_artifact(
             f"job:{source_job['id']}:artifact:1",
         ),
     ).result
+    return source, source_job, output
+
+
+def test_regeneration_refreshes_inputs_and_appends_same_artifact(
+    app,
+    client,
+    project,
+):
+    source, _source_job, output = _replayable_output(
+        app,
+        client,
+        project,
+    )
     output_v1 = output["current_version"]["id"]
 
     updated = client.post(
@@ -148,6 +155,60 @@ def test_regeneration_refreshes_inputs_and_appends_same_artifact(
         edge["upstream_version_id"]
         for edge in derivation["dependencies"]
     ] == [source_v2]
+
+
+def test_regeneration_endpoint_reuses_job_for_same_target_version(
+    app,
+    client,
+    project,
+):
+    source, _source_job, output = _replayable_output(
+        app,
+        client,
+        project,
+    )
+    updated = client.post(
+        f"/api/artifacts/{source['id']}/versions",
+        json={"payload": {"body": "source-v2"}},
+    )
+    assert updated.status_code == 201, updated.text
+
+    first = client.post(
+        f"/api/artifacts/{output['id']}/regenerate"
+    )
+    second = client.post(
+        f"/api/artifacts/{output['id']}/regenerate"
+    )
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    assert second.json()["id"] == first.json()["id"]
+
+    with UnitOfWork(app.state.database) as uow:
+        regeneration_jobs = [
+            job
+            for job in uow.jobs.list(project["id"])
+            if (
+                job.get("payload") or {}
+            ).get("target_artifact_id") == output["id"]
+        ]
+        operations = uow.operations.list(
+            project["id"],
+            limit=500,
+        )
+    assert [job["id"] for job in regeneration_jobs] == [
+        first.json()["id"]
+    ]
+    matching = [
+        operation
+        for operation in operations
+        if operation.get("idempotency_key")
+        == (
+            "artifact-regenerate:"
+            f"{output['id']}:"
+            f"{output['current_version']['id']}"
+        )
+    ]
+    assert len(matching) == 1
 
 
 def test_regeneration_rejects_target_changed_while_job_runs(
