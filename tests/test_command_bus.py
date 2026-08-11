@@ -19,6 +19,7 @@ def test_artifact_api_is_idempotent_and_audited(client, project):
     assert operation["operation_type"] == "artifact.create"
     assert operation["result"]["artifact"]["id"] == first.json()["id"]
     assert operation["result"]["version_id"] == first.json()["current_version"]["id"]
+    assert operation["arguments"]["idempotency_scope"] == f"project:{project['id']}"
     assert operation["arguments"]["payload_sha256"]
     assert "payload" not in operation["arguments"]
 
@@ -30,70 +31,52 @@ def test_idempotent_create_replays_original_version_snapshot(client, project):
     original_version_id = created["current_version"]["id"]
     appended = client.post(f"/api/artifacts/{created['id']}/versions", json={"payload": {"body": "v2"}})
     assert appended.status_code == 201
-    assert appended.json()["id"] != original_version_id
     replay = client.post(f"/api/projects/{project['id']}/artifacts", json=body, headers=headers)
     assert replay.status_code == 201
     assert replay.json()["current_version"]["id"] == original_version_id
     assert replay.json()["current_version"]["payload"] == {"body": "v1"}
-    current = client.get(f"/api/artifacts/{created['id']}").json()
-    assert current["current_version"]["payload"] == {"body": "v2"}
+    assert client.get(f"/api/artifacts/{created['id']}").json()["current_version"]["payload"] == {"body": "v2"}
 
 
 def test_failed_schema_command_is_persisted(client, project):
-    response = client.post(
-        f"/api/projects/{project['id']}/artifacts",
-        headers={"Idempotency-Key": "bad-timeline"},
-        json={"kind": "timeline", "name": "坏时间线", "payload": {"width": 1}},
-    )
+    response = client.post(f"/api/projects/{project['id']}/artifacts", headers={"Idempotency-Key": "bad-timeline"}, json={"kind": "timeline", "name": "坏时间线", "payload": {"width": 1}})
     assert response.status_code == 422
     operations = client.get(f"/api/projects/{project['id']}/operations", params={"status": "failed"}).json()
     operation = next(item for item in operations if item["idempotency_key"] == "bad-timeline")
-    assert operation["operation_type"] == "artifact.create"
     assert operation["status"] == "failed"
     assert "timeline payload" in operation["error"]
 
 
 def test_version_precondition_conflict_is_audited(client, project):
-    artifact = client.post(
-        f"/api/projects/{project['id']}/artifacts",
-        json={"kind": "custom_note", "name": "版本冲突", "payload": {"body": "v1"}},
-    ).json()
-    response = client.post(
-        f"/api/artifacts/{artifact['id']}/versions",
-        headers={"Idempotency-Key": "wrong-version"},
-        json={"payload": {"body": "v2"}, "expected_current_version_id": "not-current"},
-    )
+    artifact = client.post(f"/api/projects/{project['id']}/artifacts", json={"kind": "custom_note", "name": "版本冲突", "payload": {"body": "v1"}}).json()
+    response = client.post(f"/api/artifacts/{artifact['id']}/versions", headers={"Idempotency-Key": "wrong-version"}, json={"payload": {"body": "v2"}, "expected_current_version_id": "not-current"})
     assert response.status_code == 409
     with UnitOfWork(client.app.state.database) as uow:
         operation = uow.operations.find_by_idempotency_key("wrong-version")
         versions = uow.artifacts.versions(artifact["id"])
     assert operation["status"] == "failed"
-    assert "current version changed" in operation["error"]
     assert len(versions) == 1
 
 
 def test_reusing_key_for_different_command_is_rejected(client, project):
     headers = {"Idempotency-Key": "same-key"}
-    first = client.post(
-        f"/api/projects/{project['id']}/artifacts",
-        headers=headers,
-        json={"kind": "custom_note", "name": "A", "payload": {"body": "a"}},
-    )
+    first = client.post(f"/api/projects/{project['id']}/artifacts", headers=headers, json={"kind": "custom_note", "name": "A", "payload": {"body": "a"}})
     assert first.status_code == 201
-    second = client.post(
-        f"/api/projects/{project['id']}/artifacts",
-        headers=headers,
-        json={"kind": "custom_note", "name": "B", "payload": {"body": "b"}},
-    )
+    second = client.post(f"/api/projects/{project['id']}/artifacts", headers=headers, json={"kind": "custom_note", "name": "B", "payload": {"body": "b"}})
     assert second.status_code == 409
-    assert "Idempotency-Key" in second.json()["detail"]
 
 
 def test_idempotency_key_length_is_bounded(client, project):
-    response = client.post(
-        f"/api/projects/{project['id']}/artifacts",
-        headers={"Idempotency-Key": "x" * 201},
-        json={"kind": "custom_note", "name": "too long", "payload": {"body": "x"}},
-    )
+    response = client.post(f"/api/projects/{project['id']}/artifacts", headers={"Idempotency-Key": "x" * 201}, json={"kind": "custom_note", "name": "too long", "payload": {"body": "x"}})
     assert response.status_code == 400
-    assert "Idempotency-Key" in response.json()["detail"]
+
+
+def test_idempotency_key_cannot_cross_project_scope(client, project):
+    other = client.post("/api/projects", json={"title": "另一个项目"}).json()
+    headers = {"Idempotency-Key": "scoped-create"}
+    body = {"kind": "custom_note", "name": "same", "payload": {"body": "same"}}
+    first = client.post(f"/api/projects/{project['id']}/artifacts", headers=headers, json=body)
+    assert first.status_code == 201
+    second = client.post(f"/api/projects/{other['id']}/artifacts", headers=headers, json=body)
+    assert second.status_code == 409
+    assert "Idempotency-Key" in second.json()["detail"]

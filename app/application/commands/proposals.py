@@ -25,6 +25,10 @@ class AcceptProposalCommand:
     def target_id(self) -> str:
         return self.proposal_id
 
+    @property
+    def idempotency_scope(self) -> str:
+        return f"proposal:{self.proposal_id}"
+
     def arguments(self) -> dict[str, Any]:
         return {"proposal_id": self.proposal_id, "op_indices": self.op_indices}
 
@@ -49,12 +53,7 @@ class AcceptProposalCommand:
                 affected.append({"type": "unit", "id": unit_id})
         return OperationExecution(
             result=result,
-            audit_result={
-                "proposal_id": self.proposal_id,
-                "artifact_id": result.get("artifact_id"),
-                "version_id": version.get("id"),
-                "applied": result.get("applied") or [],
-            },
+            audit_result={"proposal_id": self.proposal_id, "artifact_id": result.get("artifact_id"), "version_id": version.get("id"), "applied": result.get("applied") or []},
             affected_entities=affected,
             inverse_operation=None,
         )
@@ -62,12 +61,7 @@ class AcceptProposalCommand:
     def replay(self, uow: UnitOfWork, audit_result: Any) -> dict[str, Any]:
         stored = audit_result or {}
         version_id = stored.get("version_id")
-        return {
-            "proposal": uow.proposals.get(self.proposal_id),
-            "artifact_id": stored.get("artifact_id"),
-            "version": uow.artifacts.get_version(str(version_id)) if version_id else None,
-            "applied": stored.get("applied") or [],
-        }
+        return {"proposal": uow.proposals.get(self.proposal_id), "artifact_id": stored.get("artifact_id"), "version": uow.artifacts.get_version(str(version_id)) if version_id else None, "applied": stored.get("applied") or []}
 
 
 @dataclass(slots=True)
@@ -83,6 +77,10 @@ class RejectProposalCommand:
     def target_id(self) -> str:
         return self.proposal_id
 
+    @property
+    def idempotency_scope(self) -> str:
+        return f"proposal:{self.proposal_id}"
+
     def arguments(self) -> dict[str, Any]:
         return {"proposal_id": self.proposal_id}
 
@@ -95,12 +93,7 @@ class RejectProposalCommand:
 
     def execute(self, uow: UnitOfWork) -> OperationExecution:
         result = reject_proposal(uow, self.proposal_id)
-        return OperationExecution(
-            result=result,
-            audit_result={"proposal_id": self.proposal_id},
-            affected_entities=[{"type": "proposal", "id": self.proposal_id}],
-            inverse_operation=None,
-        )
+        return OperationExecution(result=result, audit_result={"proposal_id": self.proposal_id}, affected_entities=[{"type": "proposal", "id": self.proposal_id}], inverse_operation=None)
 
     def replay(self, uow: UnitOfWork, audit_result: Any) -> dict[str, Any]:
         return uow.proposals.get(self.proposal_id)

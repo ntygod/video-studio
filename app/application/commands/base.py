@@ -12,6 +12,10 @@ from app.store import UnitOfWork
 from app.store.repositories import ConflictError
 
 
+class CommandValidationError(ValueError):
+    """The requested semantic operation violates its input contract."""
+
+
 @dataclass(frozen=True, slots=True)
 class CommandContext:
     actor_type: str = "user"
@@ -42,6 +46,7 @@ class SemanticCommand(Protocol):
     project_id: str | None
     target_type: str
     target_id: str
+    idempotency_scope: str
 
     def arguments(self) -> dict[str, Any]: ...
     def preconditions(self) -> list[dict[str, Any]]: ...
@@ -55,8 +60,15 @@ class CommandBus:
         self.database = database
 
     @staticmethod
-    def _assert_same_command(existing: dict[str, Any], command: SemanticCommand) -> None:
-        if existing["operation_type"] != command.operation_type or existing["arguments"] != command.arguments():
+    def _audit_arguments(command: SemanticCommand) -> dict[str, Any]:
+        arguments = command.arguments()
+        if "idempotency_scope" in arguments:
+            raise RuntimeError("command arguments reserve idempotency_scope")
+        return {"idempotency_scope": command.idempotency_scope, **arguments}
+
+    @classmethod
+    def _assert_same_command(cls, existing: dict[str, Any], command: SemanticCommand) -> None:
+        if existing["operation_type"] != command.operation_type or existing["arguments"] != cls._audit_arguments(command):
             raise ConflictError("Idempotency-Key 已被另一个操作使用")
 
     def _existing_result(self, command: SemanticCommand, context: CommandContext) -> CommandResult | None:
@@ -89,7 +101,7 @@ class CommandBus:
                 "target_id": command.target_id,
                 "risk_level": command.risk_level,
                 "idempotency_key": context.idempotency_key or None,
-                "arguments": command.arguments(),
+                "arguments": self._audit_arguments(command),
                 "preconditions": command.preconditions(),
             })
 
