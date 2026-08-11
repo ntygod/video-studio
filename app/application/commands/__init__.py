@@ -12,6 +12,7 @@ from .base import (
     OperationExecution,
     get_command_bus,
 )
+from .inverse import RevertOperationCommand
 from .jobs import CreateJobCommand
 from .projects import (
     CreateProjectCommand,
@@ -19,7 +20,6 @@ from .projects import (
     PatchProjectCommand,
     PatchUnitCommand,
 )
-from .inverse import RevertOperationCommand
 from .proposals import (
     AcceptProposalCommand,
     CreateArtifactChangeProposalCommand,
@@ -27,6 +27,7 @@ from .proposals import (
     RejectProposalCommand,
 )
 from .recovery import recover_interrupted_operations
+from .timeline import CompileTimelineCommand
 
 __all__ = [
     "AcceptProposalCommand",
@@ -35,6 +36,7 @@ __all__ = [
     "CommandContext",
     "CommandResult",
     "CommandValidationError",
+    "CompileTimelineCommand",
     "CreateArtifactChangeProposalCommand",
     "CreateArtifactCommand",
     "CreateAssetCommand",
