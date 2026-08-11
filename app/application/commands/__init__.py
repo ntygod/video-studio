@@ -20,6 +20,10 @@ from .base import (
 )
 from .batch_jobs import CreateBatchJobsCommand
 from .deletions import DeleteProjectCommand
+from .generated_artifacts import (
+    PersistGeneratedArtifactCommand,
+    generated_artifact_attempt,
+)
 from .generated_assets import PersistGeneratedAssetCommand
 from .inverse import RevertOperationCommand
 from .jobs import CreateJobCommand
@@ -62,10 +66,12 @@ __all__ = [
     "PatchAssetScopeCommand",
     "PatchProjectCommand",
     "PatchUnitCommand",
+    "PersistGeneratedArtifactCommand",
     "PersistGeneratedAssetCommand",
     "RejectProposalCommand",
     "RevertOperationCommand",
     "SetArtifactVersionStatusCommand",
+    "generated_artifact_attempt",
     "get_command_bus",
     "recover_interrupted_operations",
 ]
