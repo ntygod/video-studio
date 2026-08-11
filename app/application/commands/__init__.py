@@ -18,6 +18,7 @@ from .base import (
     OperationExecution,
     get_command_bus,
 )
+from .batch_jobs import CreateBatchJobsCommand
 from .deletions import DeleteProjectCommand
 from .generated_assets import PersistGeneratedAssetCommand
 from .inverse import RevertOperationCommand
@@ -48,6 +49,7 @@ __all__ = [
     "CreateArtifactChangeProposalCommand",
     "CreateArtifactCommand",
     "CreateAssetCommand",
+    "CreateBatchJobsCommand",
     "CreateJobCommand",
     "CreateProjectCommand",
     "CreateStructureProposalCommand",
