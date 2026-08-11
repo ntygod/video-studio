@@ -8,6 +8,9 @@ from app.application.commands import (
     RegisterArtifactDerivationCommand,
     get_command_bus,
 )
+from app.application.freshness_service import (
+    list_project_artifact_freshness,
+)
 from app.store import UnitOfWork
 
 router = APIRouter(tags=["artifact-dependencies"])
@@ -42,6 +45,22 @@ def register_derivation(
         ),
         command_context(request),
     ).result
+
+
+@router.get(
+    "/api/projects/{project_id}/artifact-freshness"
+)
+def get_project_freshness(
+    project_id: str,
+    request: Request,
+    include_fresh: bool = False,
+):
+    with UnitOfWork(request.app.state.database) as uow:
+        return list_project_artifact_freshness(
+            uow,
+            project_id,
+            include_fresh=include_fresh,
+        )
 
 
 @router.get("/api/artifact-versions/{version_id}/provenance")
