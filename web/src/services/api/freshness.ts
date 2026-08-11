@@ -1,6 +1,7 @@
 "use client";
 
-import { get, seg } from "./http";
+import { get, post, seg } from "./http";
+import type { Job } from "./types";
 
 export type ArtifactFreshnessStatus =
     | "fresh"
@@ -67,5 +68,11 @@ export function getProjectArtifactFreshness(
 export function getArtifactImpact(artifactId: string) {
     return get<ArtifactImpactItem[]>(
         `/api/artifacts/${seg(artifactId)}/impact`,
+    );
+}
+
+export function regenerateArtifact(artifactId: string) {
+    return post<Job>(
+        `/api/artifacts/${seg(artifactId)}/regenerate`,
     );
 }

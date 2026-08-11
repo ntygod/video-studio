@@ -1,10 +1,15 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import {
+    useMutation,
+    useQuery,
+    useQueryClient,
+} from "@tanstack/react-query";
 
 import {
     getArtifactImpact,
     getProjectArtifactFreshness,
+    regenerateArtifact,
 } from "@/services/api";
 import { qk } from "@/services/queries/keys";
 
@@ -32,5 +37,24 @@ export function useArtifactImpact(
         queryFn: () => getArtifactImpact(artifactId as string),
         enabled: Boolean(artifactId && enabled),
         staleTime: 10_000,
+    });
+}
+
+export function useRegenerateArtifact(projectId: string) {
+    const client = useQueryClient();
+    return useMutation({
+        mutationFn: (artifactId: string) =>
+            regenerateArtifact(artifactId),
+        onSuccess: () => {
+            client.invalidateQueries({
+                queryKey: qk.jobsRoot(),
+            });
+            client.invalidateQueries({
+                queryKey: qk.artifactsRoot(projectId),
+            });
+            client.invalidateQueries({
+                queryKey: qk.freshnessRoot(projectId),
+            });
+        },
     });
 }

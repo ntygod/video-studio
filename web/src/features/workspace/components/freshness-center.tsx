@@ -7,6 +7,7 @@ import {
     ChevronDown,
     ChevronRight,
     RefreshCw,
+    Sparkles,
 } from "lucide-react";
 
 import type {
@@ -16,6 +17,7 @@ import type {
 import {
     useArtifactImpact,
     useProjectArtifactFreshness,
+    useRegenerateArtifact,
 } from "@/services/queries";
 import {
     actionableFreshnessCount,
@@ -31,6 +33,7 @@ import {
     StatusDot,
     Text,
     Tooltip,
+    useApp,
 } from "@/shared/ui";
 
 function versionsHref(
@@ -137,9 +140,13 @@ function ImpactDisclosure({
 function FreshnessItem({
     projectId,
     item,
+    regenerating,
+    onRegenerate,
 }: {
     projectId: string;
     item: ProjectArtifactFreshnessItem;
+    regenerating: boolean;
+    onRegenerate: (artifactId: string) => void;
 }) {
     const meta = freshnessMeta(item.status);
     const versionCount = item.stale_from_version_ids.length;
@@ -182,6 +189,16 @@ function FreshnessItem({
                         </Text>
                     ) : null}
                     <div className="mt-2 flex flex-wrap items-center gap-2">
+                        {item.status === "stale" ? (
+                            <Button
+                                size="sm"
+                                icon={<Sparkles className="size-3.5" />}
+                                loading={regenerating}
+                                onClick={() => onRegenerate(item.artifact_id)}
+                            >
+                                按最新输入重新生成
+                            </Button>
+                        ) : null}
                         <Link
                             href={versionsHref(
                                 projectId,
@@ -189,7 +206,7 @@ function FreshnessItem({
                                 item.unit_id,
                             )}
                         >
-                            <Button size="sm" variant="secondary">
+                            <Button size="sm" variant="ghost">
                                 打开版本
                             </Button>
                         </Link>
@@ -209,13 +226,28 @@ export function FreshnessCenter({
 }: {
     projectId: string;
 }) {
+    const { message } = useApp();
     const [open, setOpen] = useState(false);
     const query = useProjectArtifactFreshness(projectId);
+    const regenerate = useRegenerateArtifact(projectId);
     const count = actionableFreshnessCount(query.data);
     const items = useMemo(
         () => sortFreshnessItems(query.data?.items || []),
         [query.data?.items],
     );
+
+    const startRegeneration = async (artifactId: string) => {
+        try {
+            const job = await regenerate.mutateAsync(artifactId);
+            message.success(`重新生成任务已创建：${job.id.slice(0, 8)}`);
+        } catch (error) {
+            message.error(
+                error instanceof Error
+                    ? error.message
+                    : "重新生成任务创建失败",
+            );
+        }
+    };
 
     if (!count && !query.isError) return null;
 
@@ -254,7 +286,7 @@ export function FreshnessCenter({
                             tone="faint"
                             className="mt-0.5"
                         >
-                            先处理阻塞，再处理过期和待审阅内容。
+                            先处理阻塞，再按最新输入重新生成过期内容。
                         </Text>
                     </div>
                 }
@@ -289,6 +321,13 @@ export function FreshnessCenter({
                                 key={item.artifact_id}
                                 projectId={projectId}
                                 item={item}
+                                regenerating={
+                                    regenerate.isPending &&
+                                    regenerate.variables === item.artifact_id
+                                }
+                                onRegenerate={(artifactId) =>
+                                    void startRegeneration(artifactId)
+                                }
                             />
                         ))}
                     </div>
