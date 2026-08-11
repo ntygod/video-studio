@@ -6,6 +6,7 @@ from .artifacts import (
 from .assets import (
     CreateAssetCommand,
     CreateUploadedAssetCommand,
+    DeleteAssetCommand,
     MAX_UPLOAD_BYTES,
     PatchAssetScopeCommand,
 )
@@ -50,6 +51,7 @@ __all__ = [
     "CreateStructureProposalCommand",
     "CreateUnitsCommand",
     "CreateUploadedAssetCommand",
+    "DeleteAssetCommand",
     "MAX_UPLOAD_BYTES",
     "OperationExecution",
     "PatchAssetScopeCommand",

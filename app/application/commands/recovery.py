@@ -11,13 +11,7 @@ def recover_interrupted_operations(
     database,
     media_store=None,
 ) -> int:
-    """Compensate external staging, then fail inherited running operations.
-
-    CommandBus commits the business mutation and the succeeded audit state in
-    the same database transaction. A still-running upload has no committed
-    Asset row, but its deterministic file may already exist and must be
-    removed before the operation is marked failed.
-    """
+    """Compensate external staging, then fail inherited running operations."""
 
     with UnitOfWork(database) as uow:
         operations = uow.operations.list(
@@ -28,14 +22,16 @@ def recover_interrupted_operations(
     recovered = 0
     for operation in operations:
         error = INTERRUPTED_OPERATION_ERROR
-        if (
-            media_store is not None
-            and operation["operation_type"] == "asset.upload"
-        ):
+        if media_store is not None:
             try:
-                media_store.cleanup_operation_files(operation["id"])
+                if operation["operation_type"] == "asset.upload":
+                    media_store.cleanup_operation_files(operation["id"])
+                elif operation["operation_type"] == "asset.delete":
+                    media_store.restore_operation_quarantine(
+                        operation["id"]
+                    )
             except Exception as exc:
-                error += f"; upload cleanup failed: {exc}"
+                error += f"; external compensation failed: {exc}"
         with UnitOfWork(database) as uow:
             current = uow.operations.get(operation["id"])
             if current["status"] != "running":

@@ -9,8 +9,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import select
+
 from app.store import UnitOfWork
-from app.store.repositories import NotFoundError
+from app.store.models import AssetRow
+from app.store.repositories import (
+    ConflictError,
+    NotFoundError,
+)
 
 from .base import CommandValidationError, OperationExecution
 
@@ -298,9 +304,6 @@ class CreateUploadedAssetCommand:
             affected_entities=[
                 {"type": "asset", "id": asset["id"]}
             ],
-            # File-backed deletion/revert is introduced together with the
-            # quarantine protocol; until then uploads remain audited but have
-            # no falsely advertised inverse.
             inverse_operation=None,
             on_rollback=(
                 lambda stored_uri=uri: self.media_store.delete_asset(
@@ -400,9 +403,115 @@ class PatchAssetScopeCommand:
         return deepcopy(audit_result)
 
 
+@dataclass(slots=True)
+class DeleteAssetCommand:
+    asset_id: str
+    media_store: Any = field(repr=False)
+    project_id: str | None = None
+    _operation_id: str | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+    _prepared_snapshot: dict[str, Any] | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
+
+    operation_type = "asset.delete"
+    risk_level = "high"
+    target_type = "asset"
+
+    @property
+    def target_id(self) -> str:
+        return self.asset_id
+
+    @property
+    def idempotency_scope(self) -> str:
+        return f"asset:{self.asset_id}:delete"
+
+    def bind_operation_id(self, operation_id: str) -> None:
+        self._operation_id = operation_id
+
+    def arguments(self) -> dict[str, Any]:
+        return {"asset_id": self.asset_id}
+
+    def preconditions(self) -> list[dict[str, Any]]:
+        return [
+            {"type": "asset_exists", "id": self.asset_id},
+            {"type": "asset_has_no_derivatives"},
+        ]
+
+    def prepare(self, uow: UnitOfWork) -> None:
+        asset = uow.assets.get(self.asset_id)
+        self.project_id = asset["project_id"]
+        derivative_id = uow.session.scalar(
+            select(AssetRow.id)
+            .where(AssetRow.parent_asset_id == self.asset_id)
+            .limit(1)
+        )
+        if derivative_id:
+            raise ConflictError(
+                "asset with derived assets cannot be deleted"
+            )
+        self._prepared_snapshot = _asset_snapshot(asset)
+
+    def execute(self, uow: UnitOfWork) -> OperationExecution:
+        if not self._operation_id or self._prepared_snapshot is None:
+            raise RuntimeError("delete asset command is not prepared")
+        current = uow.assets.get(self.asset_id)
+        if current != self._prepared_snapshot:
+            raise ConflictError(
+                "asset changed after the delete operation was prepared"
+            )
+        moved = self.media_store.quarantine_asset(
+            [current.get("uri") or "", current.get("thumb_uri") or ""],
+            self._operation_id,
+        )
+        try:
+            uow.assets.delete(self.asset_id)
+        except Exception:
+            self.media_store.restore_operation_quarantine(
+                self._operation_id
+            )
+            raise
+
+        result = {
+            "ok": True,
+            "asset": _asset_snapshot(current),
+            "quarantined_uris": moved,
+        }
+        return OperationExecution(
+            result=result,
+            audit_result=result,
+            affected_entities=[
+                {"type": "asset", "id": self.asset_id}
+            ],
+            # A durable quarantine is retained, but restoring the complete DB
+            # row is intentionally not exposed until its own compensated
+            # inverse is implemented and migration-tested.
+            inverse_operation=None,
+            on_rollback=(
+                lambda operation_id=self._operation_id:
+                self.media_store.restore_operation_quarantine(
+                    operation_id
+                )
+            ),
+        )
+
+    def replay(
+        self,
+        uow: UnitOfWork,
+        audit_result: Any,
+    ) -> dict[str, Any]:
+        return deepcopy(audit_result)
+
+
 __all__ = [
     "CreateAssetCommand",
     "CreateUploadedAssetCommand",
+    "DeleteAssetCommand",
     "MAX_UPLOAD_BYTES",
     "PatchAssetScopeCommand",
 ]

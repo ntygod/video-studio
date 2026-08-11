@@ -1,4 +1,4 @@
-"""媒体存储：相对 URI、媒体探测、缩略图与音频波形。"""
+"""媒体存储：相对 URI、媒体探测、缩略图与可恢复隔离。"""
 
 import hashlib
 import json
@@ -6,6 +6,7 @@ import os
 import subprocess
 import uuid
 from pathlib import Path
+from typing import Iterable
 
 
 class MediaStore:
@@ -29,6 +30,15 @@ class MediaStore:
         if path != root and root not in path.parents:
             raise ValueError("invalid media path")
         return path
+
+    @staticmethod
+    def _safe_operation_id(operation_id: str) -> str:
+        if not operation_id or not all(
+            character.isalnum() or character in "-_"
+            for character in operation_id
+        ):
+            raise ValueError("invalid operation id")
+        return operation_id
 
     @staticmethod
     def _safe_suffix(suffix: str) -> str:
@@ -71,11 +81,7 @@ class MediaStore:
     ) -> tuple[str, str]:
         """以 Operation ID 写入确定性文件，支持请求幂等与崩溃清理。"""
 
-        if not operation_id or not all(
-            character.isalnum() or character in "-_"
-            for character in operation_id
-        ):
-            raise ValueError("invalid operation id")
+        operation_id = self._safe_operation_id(operation_id)
         folder = self.project_dir(project_id)
         if unit_id:
             folder = folder / unit_id
@@ -100,9 +106,111 @@ class MediaStore:
         relative = f"{project_id}/{unit_id}/" if unit_id else f"{project_id}/"
         return relative + name, digest
 
+    def _trash_dir(self, operation_id: str) -> Path:
+        operation_id = self._safe_operation_id(operation_id)
+        path = self.root / ".trash" / operation_id
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @staticmethod
+    def _normalize_uri(relative_uri: str) -> str:
+        value = str(relative_uri or "").strip()
+        if value.startswith("/media/"):
+            value = value[len("/media/") :]
+        return value.lstrip("/")
+
+    def quarantine_asset(
+        self,
+        relative_uris: Iterable[str],
+        operation_id: str,
+    ) -> list[str]:
+        """把素材及已知派生预览原子移入 Operation 回收区。
+
+        回收区保留原相对目录结构，因此进程崩溃或数据库回滚后可无损恢复。
+        """
+
+        operation_id = self._safe_operation_id(operation_id)
+        candidates: set[str] = set()
+        for raw_uri in relative_uris:
+            uri = self._normalize_uri(raw_uri)
+            if not uri:
+                continue
+            candidates.add(uri)
+            for suffix in (".thumb.png", ".thumb.jpg", ".wave.json"):
+                candidates.add(uri + suffix)
+
+        trash = self._trash_dir(operation_id)
+        moved: list[str] = []
+        try:
+            for uri in sorted(candidates):
+                source = self.path_for(uri)
+                if not source.is_file():
+                    continue
+                target = (trash / uri).resolve()
+                if trash.resolve() not in target.parents:
+                    raise ValueError("invalid quarantine path")
+                target.parent.mkdir(parents=True, exist_ok=True)
+                if target.exists():
+                    raise RuntimeError(
+                        f"quarantine target already exists: {uri}"
+                    )
+                os.replace(source, target)
+                moved.append(uri)
+        except Exception:
+            self.restore_operation_quarantine(operation_id)
+            raise
+        return moved
+
+    def restore_operation_quarantine(
+        self,
+        operation_id: str,
+    ) -> list[str]:
+        """恢复某个 Operation 隔离的全部文件。"""
+
+        operation_id = self._safe_operation_id(operation_id)
+        trash = self.root / ".trash" / operation_id
+        if not trash.exists():
+            return []
+        restored: list[str] = []
+        files = sorted(
+            [path for path in trash.rglob("*") if path.is_file()],
+            key=lambda path: len(path.parts),
+        )
+        for source in files:
+            relative = source.relative_to(trash)
+            target = self.path_for(relative.as_posix())
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.exists():
+                source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+                target_hash = hashlib.sha256(target.read_bytes()).hexdigest()
+                if source_hash != target_hash:
+                    raise RuntimeError(
+                        f"cannot restore over different media: {relative}"
+                    )
+                source.unlink()
+            else:
+                os.replace(source, target)
+            restored.append(relative.as_posix())
+        directories = sorted(
+            [path for path in trash.rglob("*") if path.is_dir()],
+            key=lambda path: len(path.parts),
+            reverse=True,
+        )
+        for directory in directories:
+            try:
+                directory.rmdir()
+            except OSError:
+                pass
+        try:
+            trash.rmdir()
+        except OSError:
+            pass
+        return restored
+
     def cleanup_operation_files(self, operation_id: str) -> list[str]:
         """清理中断上传留下的确定性文件及其派生预览。"""
 
+        operation_id = self._safe_operation_id(operation_id)
         removed: list[str] = []
         root = self.root.resolve()
         for path in list(root.rglob(f"*{operation_id}*")):
@@ -113,7 +221,6 @@ class MediaStore:
                 continue
             path.unlink(missing_ok=True)
             removed.append(relative.as_posix())
-        # 只移除已空的项目/单元目录，不影响其他媒体。
         directories = sorted(
             [item for item in root.rglob("*") if item.is_dir()],
             key=lambda item: len(item.parts),

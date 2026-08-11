@@ -7,6 +7,7 @@ from app.api.command_context import command_context
 from app.application.commands import (
     CreateAssetCommand,
     CreateUploadedAssetCommand,
+    DeleteAssetCommand,
     MAX_UPLOAD_BYTES,
     PatchAssetScopeCommand,
     get_command_bus,
@@ -82,8 +83,6 @@ def upload_asset(
     name: str = Form(""),
     unit_id: str | None = Form(None),
 ):
-    # Read one byte beyond the contract so oversize uploads are rejected
-    # deterministically instead of being silently truncated.
     content = file.file.read(MAX_UPLOAD_BYTES + 1)
     execution = get_command_bus(request.app).execute(
         CreateUploadedAssetCommand(
@@ -131,11 +130,10 @@ def patch_asset(
 
 @router.delete("/api/assets/{asset_id}")
 def delete_asset(asset_id: str, request: Request):
-    # File-backed deletion needs a quarantine/restore protocol before it can
-    # truthfully advertise deterministic undo. It remains the last Asset write
-    # entry outside CommandBus and is migrated in the next M2 slice.
-    with UnitOfWork(request.app.state.database) as uow:
-        asset = uow.assets.get(asset_id)
-        uow.assets.delete(asset_id)
-    request.app.state.media_store.delete_asset(asset["uri"])
-    return {"ok": True}
+    return get_command_bus(request.app).execute(
+        DeleteAssetCommand(
+            asset_id=asset_id,
+            media_store=request.app.state.media_store,
+        ),
+        command_context(request),
+    ).result
