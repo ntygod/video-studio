@@ -12,6 +12,7 @@ from .repositories import ArtifactRepository, NotFoundError, new_id
 from .semantic_graph_repository import (
     SemanticArtifactGraphRepository,
 )
+from .semantic_impacts import record_artifact_impacts
 
 
 class SchemaAwareArtifactRepository(ArtifactRepository):
@@ -95,10 +96,11 @@ class SchemaAwareArtifactRepository(ArtifactRepository):
             )
         row.schema_version = validated.schema_version
         self.session.flush()
-        SemanticArtifactGraphRepository(
+        impacted = SemanticArtifactGraphRepository(
             self.session
         ).on_new_version(
             artifact_id,
             row.id,
         )
+        record_artifact_impacts(self.session, impacted)
         return self._version(row)

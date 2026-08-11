@@ -13,6 +13,7 @@ from .repositories import NotFoundError, UnitRepository
 from .semantic_graph_repository import (
     SemanticArtifactGraphRepository,
 )
+from .semantic_impacts import record_artifact_impacts
 
 
 class SemanticUnitRepository(UnitRepository):
@@ -72,7 +73,9 @@ class SemanticUnitRepository(UnitRepository):
         by_artifact: dict[str, dict[str, Any]] = {}
         for impact in [*asset_impacts, *artifact_impacts]:
             by_artifact[impact["artifact_id"]] = impact
-        return list(by_artifact.values())
+        impacts = list(by_artifact.values())
+        record_artifact_impacts(self.session, impacts)
+        return impacts
 
 
 __all__ = ["SemanticUnitRepository"]

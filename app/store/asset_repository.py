@@ -9,6 +9,7 @@ from .repositories import AssetRepository, NotFoundError
 from .semantic_graph_repository import (
     SemanticArtifactGraphRepository,
 )
+from .semantic_impacts import record_artifact_impacts
 
 _UNSET = object()
 
@@ -40,6 +41,7 @@ class SemanticAssetRepository(AssetRepository):
         impacted = SemanticArtifactGraphRepository(
             self.session
         ).on_assets_deleted([asset_id])
+        record_artifact_impacts(self.session, impacted)
         self.session.delete(row)
         self.session.flush()
         return impacted

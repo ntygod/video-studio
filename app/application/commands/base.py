@@ -10,6 +10,10 @@ from sqlalchemy.exc import IntegrityError
 
 from app.store import UnitOfWork
 from app.store.repositories import ConflictError
+from app.store.semantic_impacts import (
+    merge_affected_entities,
+    take_affected_entities,
+)
 
 
 class CommandValidationError(ValueError):
@@ -226,8 +230,9 @@ class CommandBus:
         execution: OperationExecution | None = None
         try:
             # Business mutation and operation completion commit together.
-            # Large payloads are not duplicated in the audit row: commands
-            # persist compact references and know how to reconstruct a replay.
+            # Repositories may record secondary semantic effects such as
+            # downstream Freshness changes. They are merged into the same
+            # OperationLog before commit, never written as a separate audit.
             with UnitOfWork(self.database) as uow:
                 execution = command.execute(uow)
                 audit_result = (
@@ -235,10 +240,14 @@ class CommandBus:
                     if execution.audit_result is not None
                     else execution.result
                 )
+                affected_entities = merge_affected_entities(
+                    execution.affected_entities,
+                    take_affected_entities(uow.session),
+                )
                 completed = uow.operations.succeed(
                     operation["id"],
                     result=audit_result,
-                    affected_entities=execution.affected_entities,
+                    affected_entities=affected_entities,
                     inverse_operation=execution.inverse_operation,
                 )
             return CommandResult(
