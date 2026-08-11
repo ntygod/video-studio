@@ -26,6 +26,7 @@ class OperationExecution:
     result: Any
     affected_entities: list[dict[str, Any]]
     inverse_operation: dict[str, Any] | None = None
+    audit_result: Any = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,6 +47,7 @@ class SemanticCommand(Protocol):
     def preconditions(self) -> list[dict[str, Any]]: ...
     def prepare(self, uow: UnitOfWork) -> None: ...
     def execute(self, uow: UnitOfWork) -> OperationExecution: ...
+    def replay(self, uow: UnitOfWork, audit_result: Any) -> Any: ...
 
 
 class CommandBus:
@@ -67,7 +69,9 @@ class CommandBus:
             return None
         self._assert_same_command(existing, command)
         if existing["status"] == "succeeded":
-            return CommandResult(operation=existing, result=existing["result"], replayed=True)
+            with UnitOfWork(self.database) as uow:
+                result = command.replay(uow, existing["result"])
+            return CommandResult(operation=existing, result=result, replayed=True)
         if existing["status"] == "running":
             raise ConflictError("相同操作仍在执行")
         raise ConflictError("相同 Idempotency-Key 的上次操作已失败；请确认后使用新的 key 重试")
@@ -124,8 +128,9 @@ class CommandBus:
         try:
             with UnitOfWork(self.database) as uow:
                 execution = command.execute(uow)
+                audit_result = execution.audit_result if execution.audit_result is not None else execution.result
                 completed = uow.operations.succeed(
-                    operation["id"], result=execution.result,
+                    operation["id"], result=audit_result,
                     affected_entities=execution.affected_entities,
                     inverse_operation=execution.inverse_operation,
                 )

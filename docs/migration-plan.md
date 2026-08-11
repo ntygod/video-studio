@@ -51,13 +51,18 @@
 
 ## M2 · CommandBus、OperationLog 与可靠撤销
 
-- 所有跨实体写入收口到 CommandBus。
-- 引入语义 Operation 和 precondition。
-- 写入 OperationLog、affected entities 和 inverse operation。
-- Agent 工具只能调用 Command / Query API。
-- 提案采纳、用户编辑和 Agent 写入共享同一条写路径。
+- [x] 新增 `operation_logs` 持久化表与 Alembic 迁移。
+- [x] 建立带幂等键、前置条件、风险等级、影响实体和失败审计的 CommandBus。
+- [x] 审计只保存 payload 指纹和紧凑结果引用，不重复存储稿件正文。
+- [x] Artifact 创建、追加版本、恢复、批准、锁定已进入 CommandBus。
+- [x] 提案接受与拒绝已进入同一操作审计链。
+- [x] 暴露项目 OperationLog 查询 API。
+- [ ] 项目、单元、资产、时间线编译和媒体写入迁入 CommandBus。
+- [ ] Agent 写工具只能调用 Command / Query API。
+- [ ] 实现 inverse operation 执行器；当前只持久化逆操作描述。
+- [ ] 用户编辑、Agent 写入和提案采纳完全共享同一条语义写路径。
 
-**验收：** 新增、修改、移动、删除均可审计；可逆操作可确定性撤销；不再依靠 revision/时间戳猜测。
+**阶段验收：** Artifact 主写链具备幂等和成功/失败审计；M2 完成验收仍要求所有核心写入口迁移并能执行确定性逆操作。
 
 ## M3 · Dependency、Provenance 与 Freshness
 

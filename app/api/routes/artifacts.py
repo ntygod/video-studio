@@ -3,6 +3,13 @@ from typing import Any
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
+from app.api.command_context import command_context
+from app.application.commands import (
+    AddArtifactVersionCommand,
+    CreateArtifactCommand,
+    SetArtifactVersionStatusCommand,
+    get_command_bus,
+)
 from app.domain.artifact_registry import artifact_definitions
 from app.domain.enums import ArtifactStatus
 from app.store import UnitOfWork
@@ -24,54 +31,32 @@ class ArtifactVersionCreate(BaseModel):
     payload: dict[str, Any]
     note: str = ""
     schema_version: int | None = Field(default=None, ge=1)
+    expected_current_version_id: str | None = None
 
 
 @router.get("/api/artifact-definitions")
-def list_artifact_definitions(
-    kind: str | None = None,
-    include_schema: bool = True,
-):
-    return artifact_definitions.describe(
-        kind=kind,
-        include_schema=include_schema,
-    )
+def list_artifact_definitions(kind: str | None = None, include_schema: bool = True):
+    return artifact_definitions.describe(kind=kind, include_schema=include_schema)
 
 
 @router.get("/api/projects/{project_id}/artifacts")
-def list_artifacts(
-    project_id: str,
-    request: Request,
-    unit_id: str | None = None,
-    kind: str | None = None,
-    include_payload: bool = False,
-    limit: int = 50,
-    cursor: str | None = None,
-):
+def list_artifacts(project_id: str, request: Request, unit_id: str | None = None, kind: str | None = None, include_payload: bool = False, limit: int = 50, cursor: str | None = None):
     with UnitOfWork(request.app.state.database) as uow:
         uow.projects.get(project_id)
-        return uow.artifacts.list_page(
-            project_id,
-            unit_id=unit_id,
-            kind=kind,
-            include_payload=include_payload,
-            limit=limit,
-            cursor=cursor,
-        )
+        return uow.artifacts.list_page(project_id, unit_id=unit_id, kind=kind, include_payload=include_payload, limit=limit, cursor=cursor)
 
 
 @router.post("/api/projects/{project_id}/artifacts", status_code=201)
 def post_artifact(project_id: str, data: ArtifactCreate, request: Request):
-    with UnitOfWork(request.app.state.database) as uow:
-        uow.projects.get(project_id)
-        return uow.artifacts.create(
-            project_id=project_id,
-            unit_id=data.unit_id,
-            kind=data.kind,
-            name=data.name,
-            schema_id=data.schema_id,
-            schema_version=data.schema_version,
-            payload=data.payload,
-        )
+    result = get_command_bus(request.app).execute(
+        CreateArtifactCommand(
+            project_id=project_id, unit_id=data.unit_id, kind=data.kind,
+            name=data.name, schema_id=data.schema_id,
+            schema_version=data.schema_version, payload=data.payload,
+        ),
+        command_context(request),
+    )
+    return result.result
 
 
 @router.get("/api/artifacts/{artifact_id}")
@@ -88,19 +73,16 @@ def list_versions(artifact_id: str, request: Request):
 
 
 @router.post("/api/artifacts/{artifact_id}/versions", status_code=201)
-def post_version(
-    artifact_id: str,
-    data: ArtifactVersionCreate,
-    request: Request,
-):
-    with UnitOfWork(request.app.state.database) as uow:
-        return uow.artifacts.add_version(
-            artifact_id,
-            data.payload,
-            source="user",
-            note=data.note,
-            schema_version=data.schema_version,
-        )
+def post_version(artifact_id: str, data: ArtifactVersionCreate, request: Request):
+    result = get_command_bus(request.app).execute(
+        AddArtifactVersionCommand(
+            artifact_id=artifact_id, payload=data.payload, source="user",
+            note=data.note, schema_version=data.schema_version,
+            expected_current_version_id=data.expected_current_version_id,
+        ),
+        command_context(request),
+    )
+    return result.result
 
 
 def _dispatch_unit_summary(unit_id: str | None, request: Request) -> None:
@@ -108,50 +90,25 @@ def _dispatch_unit_summary(unit_id: str | None, request: Request) -> None:
         return
     from app.application.agent.compaction import ensure_unit_summary
     from app.application.job_engine import get_job_engine
-
-    ensure_unit_summary(
-        request.app.state.database,
-        get_job_engine(request.app),
-        unit_id,
-    )
+    ensure_unit_summary(request.app.state.database, get_job_engine(request.app), unit_id)
 
 
 @router.get("/api/artifact-versions/{version_a}/diff/{version_b}")
 def diff_versions(version_a: str, version_b: str, request: Request):
-    """结构化版本 diff：按字段路径对齐，不是文本 diff。"""
     from app.application.artifacts import _diff_payloads
-
     with UnitOfWork(request.app.state.database) as uow:
         left = uow.artifacts.get_version(version_a)
         right = uow.artifacts.get_version(version_b)
         return {
-            "version_a": {
-                "id": left["id"],
-                "version": left["version"],
-            },
-            "version_b": {
-                "id": right["id"],
-                "version": right["version"],
-            },
-            "field_diffs": _diff_payloads(
-                left["payload"],
-                right["payload"],
-            ),
+            "version_a": {"id": left["id"], "version": left["version"]},
+            "version_b": {"id": right["id"], "version": right["version"]},
+            "field_diffs": _diff_payloads(left["payload"], right["payload"]),
         }
 
 
-@router.post(
-    "/api/artifacts/{artifact_id}/restore/{version_id}",
-    status_code=201,
-)
-def restore_version(
-    artifact_id: str,
-    version_id: str,
-    request: Request,
-):
-    """回滚到目标版本内容，追加新版本而非覆盖历史。"""
+@router.post("/api/artifacts/{artifact_id}/restore/{version_id}", status_code=201)
+def restore_version(artifact_id: str, version_id: str, request: Request):
     from app.store.repositories import NotFoundError
-
     with UnitOfWork(request.app.state.database) as uow:
         target = uow.artifacts.get_version(version_id)
         if target["artifact_id"] != artifact_id:
@@ -160,35 +117,34 @@ def restore_version(
         current = artifact.get("current_version") or {}
         if current.get("status") == "locked":
             raise ConflictError("artifact is locked")
-        return uow.artifacts.add_version(
-            artifact_id,
-            target["payload"],
-            source="user",
+    result = get_command_bus(request.app).execute(
+        AddArtifactVersionCommand(
+            artifact_id=artifact_id, payload=target["payload"], source="user",
             note=f"回滚到 v{target['version']}",
-            parent_version_id=current.get("id"),
             schema_version=target.get("schema_version"),
-        )
+            expected_current_version_id=current.get("id"),
+        ),
+        command_context(request),
+    )
+    return result.result
+
+
+def _set_version_status(version_id: str, status: str, request: Request):
+    result = get_command_bus(request.app).execute(
+        SetArtifactVersionStatusCommand(version_id=version_id, status=status),
+        command_context(request),
+    ).result
+    with UnitOfWork(request.app.state.database) as uow:
+        unit_id = uow.artifacts.get(result["artifact_id"])["unit_id"]
+    _dispatch_unit_summary(unit_id, request)
+    return result
 
 
 @router.post("/api/artifact-versions/{version_id}/approve")
 def approve_version(version_id: str, request: Request):
-    with UnitOfWork(request.app.state.database) as uow:
-        result = uow.artifacts.set_status(
-            version_id,
-            ArtifactStatus.APPROVED.value,
-        )
-        unit_id = uow.artifacts.get(result["artifact_id"])["unit_id"]
-    _dispatch_unit_summary(unit_id, request)
-    return result
+    return _set_version_status(version_id, ArtifactStatus.APPROVED.value, request)
 
 
 @router.post("/api/artifact-versions/{version_id}/lock")
 def lock_version(version_id: str, request: Request):
-    with UnitOfWork(request.app.state.database) as uow:
-        result = uow.artifacts.set_status(
-            version_id,
-            ArtifactStatus.LOCKED.value,
-        )
-        unit_id = uow.artifacts.get(result["artifact_id"])["unit_id"]
-    _dispatch_unit_summary(unit_id, request)
-    return result
+    return _set_version_status(version_id, ArtifactStatus.LOCKED.value, request)
