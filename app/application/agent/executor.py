@@ -1,14 +1,16 @@
 """固定并发与有界排队的 Agent 回合执行器。
 
-Agent 回合仍沿用现有 ``run_turn``，但不再为每个请求创建一个裸线程。这个执行器
-是迁移到耐久 Task Runtime 前的可靠性边界：限制同时运行和排队的回合数量，并让
-过载变成可观察、可解释的 429，而不是耗尽线程和 SQLite 写锁。
+Agent 回合仍沿用现有 ``run_turn``，但不再为每个请求创建一个裸线程。执行器使用
+固定数量的 daemon worker 和总容量信号量，限制同时运行与排队的回合数量；过载
+会变成可观察、可解释的 429，而不是耗尽线程和 SQLite 写锁。
 """
 
 from __future__ import annotations
 
+import queue
 import threading
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future
+from dataclasses import dataclass
 from typing import Any, Callable
 
 from app.api.logging import request_id_var
@@ -21,6 +23,14 @@ DEFAULT_MAX_QUEUED = 8
 
 class AgentQueueFull(RuntimeError):
     """Agent 执行池没有剩余运行或排队容量。"""
+
+
+@dataclass(slots=True)
+class _TurnTask:
+    turn_id: str
+    emit: Callable[[dict[str, Any]], None]
+    request_id: str
+    future: Future
 
 
 class AgentTurnExecutor:
@@ -40,14 +50,21 @@ class AgentTurnExecutor:
         self.workers = max(1, int(workers))
         self.max_queued = max(0, int(max_queued))
         self._runner = runner
-        self._pool = ThreadPoolExecutor(
-            max_workers=self.workers,
-            thread_name_prefix="agent-turn",
-        )
         self._capacity = threading.BoundedSemaphore(self.workers + self.max_queued)
+        self._queue: queue.Queue[_TurnTask | None] = queue.Queue()
         self._futures: dict[str, Future] = {}
         self._lock = threading.Lock()
         self._closed = False
+        self._worker_threads: list[threading.Thread] = []
+
+        for index in range(self.workers):
+            thread = threading.Thread(
+                target=self._worker_loop,
+                name=f"agent-turn-{index}",
+                daemon=True,
+            )
+            thread.start()
+            self._worker_threads.append(thread)
 
     def submit(
         self,
@@ -66,46 +83,58 @@ class AgentTurnExecutor:
                 raise RuntimeError("Agent executor is closed")
             if not self._capacity.acquire(blocking=False):
                 raise AgentQueueFull("Agent 执行队列已满")
-            try:
-                future = self._pool.submit(
-                    self._run,
-                    turn_id,
-                    emit,
-                    request_id,
-                )
-            except Exception:
-                self._capacity.release()
-                raise
+
+            future: Future = Future()
             self._futures[turn_id] = future
-
-        future.add_done_callback(
-            lambda completed, current_turn_id=turn_id: self._finished(
-                current_turn_id, completed
+            self._queue.put_nowait(
+                _TurnTask(
+                    turn_id=turn_id,
+                    emit=emit,
+                    request_id=request_id,
+                    future=future,
+                )
             )
-        )
-        return future
+            return future
 
-    def _run(
-        self,
-        turn_id: str,
-        emit: Callable[[dict[str, Any]], None],
-        request_id: str,
-    ) -> None:
-        request_id_var.set(request_id)
+    def _worker_loop(self) -> None:
+        while True:
+            task = self._queue.get()
+            try:
+                if task is None:
+                    return
+                if not task.future.set_running_or_notify_cancel():
+                    self._finished(task.turn_id, task.future)
+                    continue
+                try:
+                    self._run(task)
+                except BaseException as exc:
+                    task.future.set_exception(exc)
+                else:
+                    task.future.set_result(None)
+                finally:
+                    self._finished(task.turn_id, task.future)
+            finally:
+                self._queue.task_done()
+
+    def _run(self, task: _TurnTask) -> None:
+        request_id_var.set(task.request_id)
         self._runner(
             self.database,
             self.settings,
             self.job_engine,
-            turn_id,
-            emit,
-            request_id=request_id,
+            task.turn_id,
+            task.emit,
+            request_id=task.request_id,
         )
 
     def _finished(self, turn_id: str, future: Future) -> None:
+        released = False
         with self._lock:
             if self._futures.get(turn_id) is future:
                 self._futures.pop(turn_id, None)
-        self._capacity.release()
+                released = True
+        if released:
+            self._capacity.release()
 
     def snapshot(self) -> dict[str, int]:
         with self._lock:
@@ -117,11 +146,27 @@ class AgentTurnExecutor:
         }
 
     def shutdown(self) -> None:
+        """停止接收新回合，取消尚未开始的任务；运行中任务由 daemon worker 收尾。"""
+
         with self._lock:
             if self._closed:
                 return
             self._closed = True
-        self._pool.shutdown(wait=False, cancel_futures=True)
+
+        while True:
+            try:
+                task = self._queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                if task is not None:
+                    task.future.cancel()
+                    self._finished(task.turn_id, task.future)
+            finally:
+                self._queue.task_done()
+
+        for _ in self._worker_threads:
+            self._queue.put_nowait(None)
 
 
 _executor_lock = threading.Lock()

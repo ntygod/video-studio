@@ -44,6 +44,7 @@ def test_agent_executor_bounds_running_and_queued_turns():
         while state["max_active"] < 2 and time.monotonic() < deadline:
             time.sleep(0.01)
         assert state["max_active"] == 2
+        assert all(thread.daemon for thread in executor._worker_threads)
 
         release.set()
         for future in futures:
@@ -80,3 +81,36 @@ def test_agent_executor_deduplicates_turn_id():
     finally:
         release.set()
         executor.shutdown()
+
+
+def test_agent_executor_shutdown_cancels_queued_turns():
+    release = threading.Event()
+    started = threading.Event()
+
+    def runner(_database, _settings, _job_engine, turn_id, _emit, **_kwargs):
+        if turn_id != "running":
+            raise AssertionError("排队中的回合不应在 shutdown 后启动")
+        started.set()
+        release.wait(timeout=3)
+
+    executor = AgentTurnExecutor(
+        object(),
+        object(),
+        object(),
+        workers=1,
+        max_queued=1,
+        runner=runner,
+    )
+    running = executor.submit("running", lambda _event: None)
+    assert started.wait(timeout=2)
+    queued = executor.submit("queued", lambda _event: None)
+
+    executor.shutdown()
+
+    assert queued.cancelled()
+    release.set()
+    running.result(timeout=3)
+    deadline = time.monotonic() + 1
+    while executor.snapshot()["pending"] and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert executor.snapshot()["pending"] == 0
