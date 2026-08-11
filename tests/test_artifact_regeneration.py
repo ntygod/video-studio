@@ -225,4 +225,4 @@ def test_regeneration_requires_replayable_job_provenance(
         f"/api/artifacts/{output['id']}/regenerate"
     )
     assert response.status_code == 422
-    assert "Operation" in response.json()["detail"]
+    assert "可重放" in response.json()["detail"]
