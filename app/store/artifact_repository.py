@@ -7,6 +7,7 @@ from typing import Any
 
 from app.domain.artifact_registry import artifact_definitions
 
+from .dependency_repository import ArtifactGraphRepository
 from .models import ArtifactRow, ArtifactVersionRow
 from .repositories import ArtifactRepository, NotFoundError, new_id
 
@@ -69,7 +70,6 @@ class SchemaAwareArtifactRepository(ArtifactRepository):
         artifact = self.session.get(ArtifactRow, artifact_id)
         if artifact is None:
             raise NotFoundError(artifact_id)
-
         validated = artifact_definitions.validate(
             artifact.kind,
             payload,
@@ -78,7 +78,6 @@ class SchemaAwareArtifactRepository(ArtifactRepository):
         )
         if artifact.schema_id != validated.schema_id:
             artifact.schema_id = validated.schema_id
-
         created = super().add_version(
             artifact_id,
             validated.payload,
@@ -89,7 +88,13 @@ class SchemaAwareArtifactRepository(ArtifactRepository):
         )
         row = self.session.get(ArtifactVersionRow, created["id"])
         if row is None:
-            raise RuntimeError("artifact version disappeared after creation")
+            raise RuntimeError(
+                "artifact version disappeared after creation"
+            )
         row.schema_version = validated.schema_version
         self.session.flush()
+        ArtifactGraphRepository(self.session).on_new_version(
+            artifact_id,
+            row.id,
+        )
         return self._version(row)

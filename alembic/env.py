@@ -11,6 +11,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from app.store import dependency_models  # noqa: E402,F401
 from app.store import models  # noqa: E402,F401
 from app.store import operation_models  # noqa: E402,F401
 from app.store.database import Base  # noqa: E402
@@ -52,7 +53,6 @@ def run_migrations_online() -> None:
     if supplied_connection is not None:
         _run_with_connection(supplied_connection)
         return
-
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",

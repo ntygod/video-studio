@@ -3,6 +3,7 @@ from .assets import CreateAssetCommand, CreateUploadedAssetCommand, DeleteAssetC
 from .base import CommandBus, CommandContext, CommandResult, CommandValidationError, OperationExecution, get_command_bus
 from .batch_jobs import CreateBatchJobsCommand
 from .deletions import DeleteProjectCommand, DeleteUnitSubtreeCommand
+from .dependencies import RegisterArtifactDerivationCommand
 from .generated_artifacts import PersistGeneratedArtifactCommand, generated_artifact_attempt
 from .generated_assets import PersistGeneratedAssetCommand, PersistGeneratedFileAssetCommand, job_asset_persistence_attempt
 from .inverse import RevertOperationCommand
@@ -22,7 +23,7 @@ __all__ = [
     "MAX_UPLOAD_BYTES", "OperationExecution", "PatchAssetScopeCommand",
     "PatchProjectCommand", "PatchUnitCommand", "PersistGeneratedArtifactCommand",
     "PersistGeneratedAssetCommand", "PersistGeneratedFileAssetCommand",
-    "RejectProposalCommand", "RevertOperationCommand", "SetArtifactVersionStatusCommand",
-    "generated_artifact_attempt", "get_command_bus", "job_asset_persistence_attempt",
-    "recover_interrupted_operations",
+    "RegisterArtifactDerivationCommand", "RejectProposalCommand", "RevertOperationCommand",
+    "SetArtifactVersionStatusCommand", "generated_artifact_attempt", "get_command_bus",
+    "job_asset_persistence_attempt", "recover_interrupted_operations",
 ]
