@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from app.application.regeneration_plan_service import (
@@ -193,7 +193,7 @@ class StartRegenerationPlanCommand:
                     "planned target version changed: "
                     + step["artifact_id"]
                 )
-        started = uow.regeneration_plans.set_plan_status(
+        uow.regeneration_plans.set_plan_status(
             self.plan_id,
             "running",
         )
@@ -203,11 +203,10 @@ class StartRegenerationPlanCommand:
             affected_entities=[
                 {"type": "regeneration_plan", "id": self.plan_id}
             ],
-            inverse_operation={
-                "type": "regeneration_plan.cancel",
-                "plan_id": self.plan_id,
-                "expected_status": started["status"],
-            },
+            # Starting a plan may already release external Jobs or append
+            # versions. Cancellation stops unfinished work but is not a true
+            # inverse, so this Operation must not advertise compensatability.
+            inverse_operation=None,
         )
 
     def replay(
