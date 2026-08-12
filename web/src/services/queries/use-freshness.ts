@@ -84,10 +84,10 @@ export function useRegenerationPlans(projectId: string) {
         queryFn: () => listRegenerationPlans(projectId),
         enabled: Boolean(projectId),
         staleTime: 5_000,
+        // Draft and blocked plans are stable until a user mutation, which
+        // already invalidates this query. Only running plans need polling.
         refetchInterval: (query) =>
-            query.state.data?.some((plan) =>
-                ["draft", "running", "blocked"].includes(plan.status),
-            )
+            query.state.data?.some((plan) => plan.status === "running")
                 ? 5_000
                 : false,
         refetchOnWindowFocus: true,
