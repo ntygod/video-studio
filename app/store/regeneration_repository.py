@@ -67,25 +67,17 @@ class RegenerationPlanRepository:
             "expected_version_id": row.expected_version_id,
             "action": row.action,
             "status": row.status,
-            "can_execute_automatically": (
-                row.can_execute_automatically
-            ),
+            "can_execute_automatically": row.can_execute_automatically,
             "depends_on_artifact_ids": loads(
-                row.depends_on_artifact_ids_json,
-                [],
+                row.depends_on_artifact_ids_json, []
             ),
             "external_upstream_artifact_ids": loads(
-                row.external_upstream_artifact_ids_json,
-                [],
+                row.external_upstream_artifact_ids_json, []
             ),
             "blockers": loads(row.blockers_json, []),
-            "missing_asset_ids": loads(
-                row.missing_asset_ids_json,
-                [],
-            ),
+            "missing_asset_ids": loads(row.missing_asset_ids_json, []),
             "direct_missing_asset_ids": loads(
-                row.direct_missing_asset_ids_json,
-                [],
+                row.direct_missing_asset_ids_json, []
             ),
             "source_job_id": row.source_job_id,
             "job_id": row.job_id,
@@ -99,19 +91,12 @@ class RegenerationPlanRepository:
         }
 
     @classmethod
-    def _plan(
-        cls,
-        row: RegenerationPlanRow,
-        steps: list[RegenerationPlanStepRow] | None = None,
-    ) -> dict[str, Any]:
+    def _plan(cls, row, steps=None) -> dict[str, Any]:
         result = {
             "id": row.id,
             "project_id": row.project_id,
             "status": row.status,
-            "root_artifact_ids": loads(
-                row.root_artifact_ids_json,
-                [],
-            ),
+            "root_artifact_ids": loads(row.root_artifact_ids_json, []),
             "include_downstream": row.include_downstream,
             "snapshot_sha256": row.snapshot_sha256,
             "summary": loads(row.summary_json, {}),
@@ -125,50 +110,48 @@ class RegenerationPlanRepository:
             result["steps"] = [cls._step(step) for step in steps]
         return result
 
-    def _plan_row(self, plan_id: str) -> RegenerationPlanRow:
+    def _plan_row(self, plan_id):
         row = self.session.get(RegenerationPlanRow, plan_id)
         if row is None:
             raise NotFoundError(plan_id)
         return row
 
-    def _step_row(self, step_id: str) -> RegenerationPlanStepRow:
+    def _step_row(self, step_id):
         row = self.session.get(RegenerationPlanStepRow, step_id)
         if row is None:
             raise NotFoundError(step_id)
         return row
 
-    def steps(self, plan_id: str) -> list[dict[str, Any]]:
+    def _step_rows(self, plan_id):
+        return self.session.scalars(
+            select(RegenerationPlanStepRow)
+            .where(RegenerationPlanStepRow.plan_id == plan_id)
+            .order_by(
+                RegenerationPlanStepRow.order_index,
+                RegenerationPlanStepRow.id,
+            )
+        ).all()
+
+    def steps(self, plan_id):
         self._plan_row(plan_id)
-        rows = self.session.scalars(
-            select(RegenerationPlanStepRow)
-            .where(RegenerationPlanStepRow.plan_id == plan_id)
-            .order_by(
-                RegenerationPlanStepRow.order_index,
-                RegenerationPlanStepRow.id,
-            )
-        ).all()
-        return [self._step(row) for row in rows]
+        return [self._step(row) for row in self._step_rows(plan_id)]
 
-    def get(self, plan_id: str) -> dict[str, Any]:
+    def get(self, plan_id):
         row = self._plan_row(plan_id)
-        step_rows = self.session.scalars(
-            select(RegenerationPlanStepRow)
-            .where(RegenerationPlanStepRow.plan_id == plan_id)
-            .order_by(
-                RegenerationPlanStepRow.order_index,
-                RegenerationPlanStepRow.id,
-            )
-        ).all()
-        return self._plan(row, step_rows)
+        return self._plan(row, self._step_rows(plan_id))
 
-    def get_step(self, step_id: str) -> dict[str, Any]:
+    def get_step(self, step_id):
         return self._step(self._step_row(step_id))
 
-    def create_from_preview(
-        self,
-        preview: dict[str, Any],
-        snapshot_sha256: str,
-    ) -> dict[str, Any]:
+    def find_step_by_job(self, job_id):
+        row = self.session.scalar(
+            select(RegenerationPlanStepRow).where(
+                RegenerationPlanStepRow.job_id == job_id
+            )
+        )
+        return self._step(row) if row else None
+
+    def create_from_preview(self, preview, snapshot_sha256):
         now = time.time()
         plan = RegenerationPlanRow(
             id=new_id(),
@@ -190,14 +173,12 @@ class RegenerationPlanRepository:
         )
         self.session.add(plan)
         self.session.flush()
-
         for order_index, item in enumerate(preview.get("steps") or []):
             status = str(item.get("execution_state") or "blocked")
             if status not in STEP_STATUSES:
                 raise ConflictError(
                     f"unsupported regeneration step state: {status}"
                 )
-            completed_at = now if status == "skipped" else None
             self.session.add(
                 RegenerationPlanStepRow(
                     id=new_id(),
@@ -205,21 +186,12 @@ class RegenerationPlanRepository:
                     project_id=plan.project_id,
                     artifact_id=str(item["artifact_id"]),
                     order_index=order_index,
-                    artifact_kind=str(
-                        item.get("artifact_kind") or ""
-                    ),
-                    artifact_name=str(
-                        item.get("artifact_name") or ""
-                    ),
-                    unit_id=(
-                        str(item["unit_id"])
-                        if item.get("unit_id")
-                        else None
-                    ),
+                    artifact_kind=str(item.get("artifact_kind") or ""),
+                    artifact_name=str(item.get("artifact_name") or ""),
+                    unit_id=(str(item["unit_id"]) if item.get("unit_id") else None),
                     expected_version_id=(
                         str(item["expected_current_version_id"])
-                        if item.get("expected_current_version_id")
-                        else None
+                        if item.get("expected_current_version_id") else None
                     ),
                     action=str(item.get("action") or "manual"),
                     status=status,
@@ -230,14 +202,9 @@ class RegenerationPlanRepository:
                         item.get("depends_on") or []
                     ),
                     external_upstream_artifact_ids_json=dumps(
-                        item.get(
-                            "external_upstream_artifact_ids"
-                        )
-                        or []
+                        item.get("external_upstream_artifact_ids") or []
                     ),
-                    blockers_json=dumps(
-                        item.get("blockers") or []
-                    ),
+                    blockers_json=dumps(item.get("blockers") or []),
                     missing_asset_ids_json=dumps(
                         item.get("missing_asset_ids") or []
                     ),
@@ -246,8 +213,7 @@ class RegenerationPlanRepository:
                     ),
                     source_job_id=(
                         str(item["source_job_id"])
-                        if item.get("source_job_id")
-                        else None
+                        if item.get("source_job_id") else None
                     ),
                     job_id=None,
                     input_json="{}",
@@ -256,18 +222,13 @@ class RegenerationPlanRepository:
                     created_at=now,
                     updated_at=now,
                     started_at=None,
-                    completed_at=completed_at,
+                    completed_at=(now if status == "skipped" else None),
                 )
             )
         self.session.flush()
         return self.get(plan.id)
 
-    def list(
-        self,
-        project_id: str,
-        *,
-        limit: int = 100,
-    ) -> list[dict[str, Any]]:
+    def list(self, project_id, *, limit=100):
         limit = max(1, min(int(limit), 200))
         rows = self.session.scalars(
             select(RegenerationPlanRow)
@@ -280,7 +241,7 @@ class RegenerationPlanRepository:
         ).all()
         return [self._plan(row) for row in rows]
 
-    def active_ids(self) -> list[str]:
+    def active_ids(self):
         return list(
             self.session.scalars(
                 select(RegenerationPlanRow.id)
@@ -289,13 +250,7 @@ class RegenerationPlanRepository:
             ).all()
         )
 
-    def set_plan_status(
-        self,
-        plan_id: str,
-        status: str,
-        *,
-        error: str = "",
-    ) -> dict[str, Any]:
+    def set_plan_status(self, plan_id, status, *, error=""):
         if status not in PLAN_STATUSES:
             raise ValueError(f"invalid regeneration plan status: {status}")
         row = self._plan_row(plan_id)
@@ -312,27 +267,23 @@ class RegenerationPlanRepository:
         self.session.flush()
         return self._plan(row)
 
-    def update_summary(
-        self,
-        plan_id: str,
-        summary: dict[str, Any],
-    ) -> dict[str, Any]:
+    def update_summary(self, plan_id, summary):
         row = self._plan_row(plan_id)
-        row.summary_json = dumps(summary)
+        row.summary_json = dumps(deepcopy(summary))
         row.updated_at = time.time()
         self.session.flush()
         return self._plan(row)
 
     def set_step_status(
         self,
-        step_id: str,
-        status: str,
+        step_id,
+        status,
         *,
-        job_id: str | None = None,
-        result: dict[str, Any] | None = None,
-        error: str = "",
-        blockers: list[dict[str, Any]] | None = None,
-    ) -> dict[str, Any]:
+        job_id=None,
+        result=None,
+        error="",
+        blockers=None,
+    ):
         if status not in STEP_STATUSES:
             raise ValueError(f"invalid regeneration step status: {status}")
         row = self._step_row(step_id)
@@ -350,18 +301,12 @@ class RegenerationPlanRepository:
             row.started_at = now
         if status in TERMINAL_STEP_STATUSES:
             row.completed_at = now
-        elif status not in TERMINAL_STEP_STATUSES:
+        else:
             row.completed_at = None
         self.session.flush()
         return self._step(row)
 
-    def set_step_input(
-        self,
-        step_id: str,
-        value: dict[str, Any],
-        *,
-        status: str,
-    ) -> dict[str, Any]:
+    def set_step_input(self, step_id, value, *, status):
         if status not in {"ready", "waiting_for_predecessors"}:
             raise ValueError("step input can only release a waiting step")
         row = self._step_row(step_id)

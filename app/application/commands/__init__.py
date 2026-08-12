@@ -11,21 +11,25 @@ from .jobs import CreateJobCommand
 from .projects import CreateProjectCommand, CreateUnitsCommand, PatchProjectCommand, PatchUnitCommand
 from .proposals import AcceptProposalCommand, CreateArtifactChangeProposalCommand, CreateStructureProposalCommand, RejectProposalCommand
 from .recovery import recover_interrupted_operations
+from .regeneration_plans import CancelRegenerationPlanCommand, CreateRegenerationPlanCommand, SetRegenerationPlanStepInputCommand, StartRegenerationPlanCommand
 from .timeline import CompileTimelineCommand
+from .timeline_recompile import RecompileTimelineArtifactCommand
 from .timeline_repair import RepairTimelineAssetsCommand
 
 __all__ = [
-    "AcceptProposalCommand", "AddArtifactVersionCommand", "CommandBus", "CommandContext",
-    "CommandResult", "CommandValidationError", "CompileTimelineCommand",
-    "CreateArtifactChangeProposalCommand", "CreateArtifactCommand", "CreateAssetCommand",
-    "CreateBatchJobsCommand", "CreateJobCommand", "CreateProjectCommand",
-    "CreateStructureProposalCommand", "CreateUnitsCommand", "CreateUploadedAssetCommand",
-    "DeleteAssetCommand", "DeleteProjectCommand", "DeleteUnitSubtreeCommand",
-    "MAX_UPLOAD_BYTES", "OperationExecution", "PatchAssetScopeCommand",
-    "PatchProjectCommand", "PatchUnitCommand", "PersistGeneratedArtifactCommand",
-    "PersistGeneratedAssetCommand", "PersistGeneratedFileAssetCommand",
+    "AcceptProposalCommand", "AddArtifactVersionCommand", "CancelRegenerationPlanCommand",
+    "CommandBus", "CommandContext", "CommandResult", "CommandValidationError",
+    "CompileTimelineCommand", "CreateArtifactChangeProposalCommand", "CreateArtifactCommand",
+    "CreateAssetCommand", "CreateBatchJobsCommand", "CreateJobCommand", "CreateProjectCommand",
+    "CreateRegenerationPlanCommand", "CreateStructureProposalCommand", "CreateUnitsCommand",
+    "CreateUploadedAssetCommand", "DeleteAssetCommand", "DeleteProjectCommand",
+    "DeleteUnitSubtreeCommand", "MAX_UPLOAD_BYTES", "OperationExecution",
+    "PatchAssetScopeCommand", "PatchProjectCommand", "PatchUnitCommand",
+    "PersistGeneratedArtifactCommand", "PersistGeneratedAssetCommand",
+    "PersistGeneratedFileAssetCommand", "RecompileTimelineArtifactCommand",
     "RegisterArtifactDerivationCommand", "RejectProposalCommand",
     "RepairTimelineAssetsCommand", "RevertOperationCommand",
-    "SetArtifactVersionStatusCommand", "generated_artifact_attempt", "get_command_bus",
+    "SetArtifactVersionStatusCommand", "SetRegenerationPlanStepInputCommand",
+    "StartRegenerationPlanCommand", "generated_artifact_attempt", "get_command_bus",
     "job_asset_persistence_attempt", "recover_interrupted_operations",
 ]
