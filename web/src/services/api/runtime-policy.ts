@@ -1,6 +1,9 @@
 "use client";
 
 import { get, post, seg } from "./http";
+import { activeConversationTurnFromPlans } from "./runtime-policy-helpers";
+
+export { activeConversationTurnFromPlans } from "./runtime-policy-helpers";
 
 export type RuntimePolicyDecisionStatus =
     | "allowed"
@@ -117,19 +120,6 @@ export function getRuntimeBudget(planId: string) {
     return get<RuntimeBudgetState>(
         `/api/runtime-plans/${seg(planId)}/budget`,
     );
-}
-
-export function activeConversationTurnFromPlans(
-    plans: RuntimePlanSummary[],
-    conversationId: string,
-): string | null {
-    const active = plans.find(
-        (plan) =>
-            ["queued", "running"].includes(plan.status) &&
-            plan.subject_type === "agent_turn" &&
-            plan.input.conversation_id === conversationId,
-    );
-    return active?.subject_id || null;
 }
 
 export async function getActiveConversationTurn(

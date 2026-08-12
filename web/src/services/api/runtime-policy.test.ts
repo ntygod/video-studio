@@ -3,22 +3,20 @@ import test from "node:test";
 
 import {
     activeConversationTurnFromPlans,
-    type RuntimePlanSummary,
-} from "./runtime-policy.ts";
+    type ActiveRuntimePlan,
+} from "./runtime-policy-helpers.ts";
 
 function plan(
     id: string,
     status: string,
     conversationId: string,
     turnId: string,
-): RuntimePlanSummary {
+): ActiveRuntimePlan & { id: string } {
     return {
         id,
-        project_id: "project-1",
-        kind: "agent.turn",
+        status,
         subject_type: "agent_turn",
         subject_id: turnId,
-        status,
         input: { conversation_id: conversationId },
     };
 }
