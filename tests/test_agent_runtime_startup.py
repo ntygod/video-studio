@@ -1,3 +1,4 @@
+import threading
 import time
 
 from fastapi.testclient import TestClient
@@ -10,6 +11,8 @@ from app.application.agent.durable_loop import (
     AGENT_TASK_TYPE,
     run_durable_agent_turn,
 )
+from app.application.task_runtime import TaskRuntime
+from app.application.task_runtime_engine import TaskExecutionContext
 from app.integrations.llm.base import ChatChunk
 from app.store import UnitOfWork
 
@@ -42,6 +45,35 @@ def _wait_turn(client: TestClient, turn_id: str, timeout: float = 5):
             return turn
         time.sleep(0.02)
     raise AssertionError(f"Agent Turn did not finish: {turn}")
+
+
+def _wait_plan(database, plan_id: str, timeout: float = 5):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with UnitOfWork(database) as uow:
+            plan = uow.task_runtime.get_plan(plan_id)
+        if plan["status"] in {
+            "succeeded",
+            "failed",
+            "blocked",
+            "canceled",
+        }:
+            return plan
+        time.sleep(0.02)
+    raise AssertionError(f"Runtime Plan did not finish: {plan}")
+
+
+def _context(
+    runtime: TaskRuntime,
+    claim: dict,
+    lease_seconds: float,
+) -> TaskExecutionContext:
+    return TaskExecutionContext.from_claim(
+        runtime,
+        claim,
+        lease_seconds,
+        threading.Event(),
+    )
 
 
 def test_application_startup_recovers_queued_agent_plan(
@@ -112,10 +144,15 @@ def test_application_startup_recovers_queued_agent_plan(
     try:
         with TestClient(app) as lifecycle_client:
             finished = _wait_turn(lifecycle_client, turn["id"])
+            # AgentTurn is committed inside the handler. RuntimeTask completion
+            # follows immediately afterward, so observe both before lifespan
+            # shutdown stops the worker pool.
+            stored_plan = _wait_plan(
+                app.state.database,
+                plan["id"],
+            )
         assert finished["status"] == "succeeded"
         assert adapter.calls == 1
-        with UnitOfWork(app.state.database) as uow:
-            stored_plan = uow.task_runtime.get_plan(plan["id"])
         assert stored_plan["status"] == "succeeded"
         assert stored_plan["tasks"][0]["attempts"][0]["status"] == (
             "succeeded"
@@ -190,7 +227,16 @@ def test_executor_repairs_events_after_terminal_commit_window(
             "completion_tokens": 0,
         }
 
-    executor = DurableAgentTurnExecutor(
+    runtime = TaskRuntime(app.state.database)
+    logical_now = time.time() + 1
+    first_claim = runtime.claim_next(
+        "agent-before-crash",
+        kinds={AGENT_PLAN_KIND},
+        lease_seconds=5,
+        now=logical_now,
+    )
+    assert first_claim is not None
+    first_executor = DurableAgentTurnExecutor(
         app.state.database,
         app.state.settings,
         job_engine,
@@ -198,20 +244,29 @@ def test_executor_repairs_events_after_terminal_commit_window(
         runner=terminal_commit_runner,
     )
     try:
-        executor.start()
-        deadline = time.monotonic() + 3
-        while time.monotonic() < deadline and not committed["done"]:
-            time.sleep(0.02)
+        try:
+            first_executor._handle_turn(
+                _context(runtime, first_claim, 5)
+            )
+            raise AssertionError("simulated process death did not occur")
+        except BaseException as exc:
+            assert str(exc) == "simulated process death"
         assert committed["done"] is True
-        executor.shutdown()
 
-        # The daemon-style crash leaves the first lease running. Recover it
-        # immediately and use a fresh executor as the restarted process.
-        with UnitOfWork(app.state.database) as uow:
-            assert uow.task_runtime.recover_expired(
-                now=time.time() + 120,
-                kinds={AGENT_PLAN_KIND},
-            ) == 1
+        # Recovery and the restarted claim use the same injected clock. This
+        # models real wall time advancing beyond the old lease without asking
+        # a real-time worker to claim a task scheduled 120 seconds ahead.
+        assert runtime.recover(
+            now=logical_now + 6,
+            kinds={AGENT_PLAN_KIND},
+        ) == 1
+        replay_claim = runtime.claim_next(
+            "agent-after-restart",
+            kinds={AGENT_PLAN_KIND},
+            lease_seconds=5,
+            now=logical_now + 7,
+        )
+        assert replay_claim is not None
 
         restarted = DurableAgentTurnExecutor(
             app.state.database,
@@ -220,23 +275,25 @@ def test_executor_repairs_events_after_terminal_commit_window(
             workers=1,
             runner=terminal_commit_runner,
         )
-        restarted.start()
         try:
-            deadline = time.monotonic() + 5
-            while time.monotonic() < deadline:
-                with UnitOfWork(app.state.database) as uow:
-                    stored_plan = uow.task_runtime.get_plan(plan["id"])
-                if stored_plan["status"] == "succeeded":
-                    break
-                time.sleep(0.02)
+            replay_context = _context(runtime, replay_claim, 5)
+            result = restarted._handle_turn(replay_context)
+            runtime.complete(
+                replay_claim,
+                result=result,
+                checkpoint=replay_context.checkpoint,
+                usage=replay_context.usage,
+                now=logical_now + 8,
+            )
+            stored_plan = runtime.get_plan(plan["id"])
             assert stored_plan["status"] == "succeeded"
             event_types = [
                 event["event_type"]
-                for event in restarted._engine.runtime.events(plan["id"])
+                for event in runtime.events(plan["id"])
             ]
             assert event_types.count("agent.message") == 1
             assert event_types.count("agent.done") == 1
         finally:
             restarted.shutdown()
     finally:
-        executor.shutdown()
+        first_executor.shutdown()
