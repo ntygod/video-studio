@@ -36,6 +36,7 @@ export type RuntimePolicyDecision = {
     decision_note: string;
     created_at: number;
     updated_at: number;
+    expires_at: number | null;
     decided_at: number | null;
 };
 

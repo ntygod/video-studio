@@ -8,6 +8,7 @@ from typing import Any, Callable
 
 from app.application.task_runtime import TaskRuntime
 from app.application.task_runtime_engine import TaskExecutionContext
+from app.store import UnitOfWork
 
 LiveEmitter = Callable[[dict[str, Any]], None]
 
@@ -69,7 +70,7 @@ def current_runtime_execution() -> RuntimeExecutionBinding | None:
 
 
 class GovernedTaskRuntime(TaskRuntime):
-    """TaskRuntime facade that turns committed budget violations into control flow."""
+    """TaskRuntime facade that enforces committed governance state."""
 
     def heartbeat(self, *args, **kwargs):
         result = super().heartbeat(*args, **kwargs)
@@ -77,6 +78,16 @@ class GovernedTaskRuntime(TaskRuntime):
         if violation and current_runtime_execution() is not None:
             raise RuntimeBudgetExceeded(violation)
         return result
+
+    def recover(self, *, kinds=None, now=None) -> int:
+        normalized_kinds = tuple(kinds) if kinds is not None else None
+        recovered = super().recover(kinds=normalized_kinds, now=now)
+        with UnitOfWork(self.database) as uow:
+            expired = uow.task_runtime.expire_pending_policy_decisions(
+                kinds=normalized_kinds,
+                now=now,
+            )
+        return recovered + expired
 
 
 __all__ = [

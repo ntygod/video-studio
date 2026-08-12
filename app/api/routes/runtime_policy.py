@@ -11,7 +11,7 @@ from app.application.agent.durable_executor import (
 from app.application.agent.durable_loop import AGENT_PLAN_KIND
 from app.application.job_engine import get_job_engine
 from app.store import UnitOfWork
-from app.store.repositories import NotFoundError
+from app.store.repositories import ConflictError, NotFoundError
 
 router = APIRouter(tags=["runtime-policy"])
 
@@ -117,7 +117,12 @@ def _resolve(
             note=data.note,
         )
     _publish_resolution(request, result["plan"], result.get("event"))
-    return result["decision"]
+    decision = result["decision"]
+    if decision["status"] == "expired":
+        raise ConflictError(
+            "runtime policy decision is already expired"
+        )
+    return decision
 
 
 @router.post("/api/runtime-policy-decisions/{decision_id}/approve")

@@ -32,6 +32,11 @@ class RuntimePolicyDecisionRow:
             "task_id",
             "status",
         ),
+        Index(
+            "ix_runtime_policy_pending_expiry",
+            "status",
+            "expires_at",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -51,6 +56,7 @@ class RuntimePolicyDecisionRow:
     decision_note: Mapped[str] = mapped_column(Text, nullable=False, default="")
     created_at: Mapped[float] = mapped_column(Float, nullable=False)
     updated_at: Mapped[float] = mapped_column(Float, nullable=False)
+    expires_at: Mapped[float | None] = mapped_column(Float, nullable=True)
     decided_at: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 

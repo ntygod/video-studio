@@ -22,7 +22,19 @@ def test_runtime_governance_migration_installs_policy_and_budget_tables(tmp_path
             revision = connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
-        assert revision == HEAD_REVISION == "20260812_0012"
+        assert revision == HEAD_REVISION == "20260812_0013"
+        decision_columns = {
+            item["name"]
+            for item in inspector.get_columns(
+                "runtime_policy_decisions"
+            )
+        }
+        decision_indexes = {
+            item["name"]
+            for item in inspector.get_indexes(
+                "runtime_policy_decisions"
+            )
+        }
         decision_unique = {
             item["name"]
             for item in inspector.get_unique_constraints(
@@ -35,6 +47,8 @@ def test_runtime_governance_migration_installs_policy_and_budget_tables(tmp_path
                 "runtime_budget_consumptions"
             )
         }
+        assert "expires_at" in decision_columns
+        assert "ix_runtime_policy_pending_expiry" in decision_indexes
         assert "uq_runtime_policy_plan_action" in decision_unique
         assert "uq_runtime_budget_plan_consumption" in consumption_unique
     finally:

@@ -31,6 +31,7 @@ DEFAULT_AGENT_POLICY: dict[str, Any] = {
     "confirmation_risk_levels": ["high"],
     "denied_actions": [],
     "allowed_actions": [],
+    "approval_ttl_seconds": 86_400,
 }
 DEFAULT_AGENT_BUDGET: dict[str, Any] = {
     "max_prompt_tokens": 120_000,
@@ -52,9 +53,11 @@ class GovernedTaskRuntimeRepository(
 
     @staticmethod
     def _decision(row):
-        """Bind the mixin serializer without turning it into an instance call."""
+        """Serialize governance fields owned by the composed repository."""
 
-        return RuntimePolicyRepositoryMixin._decision(row)
+        result = RuntimePolicyRepositoryMixin._decision(row)
+        result["expires_at"] = getattr(row, "expires_at", None)
+        return result
 
     def _record_task_usage(
         self,
@@ -63,14 +66,7 @@ class GovernedTaskRuntimeRepository(
         *,
         now: float,
     ) -> RuntimeBudgetLedgerRow:
-        """Persist the task watermark before expiring the identity map.
-
-        The base implementation introduced the durable ledger, but it expired
-        ORM state before flushing the per-Task absolute watermark. Repeated
-        heartbeats could therefore recount the same tokens. Keeping the fix in
-        the composed repository preserves the original runtime layer while the
-        governance extension owns its aggregate accounting semantics.
-        """
+        """Persist the task watermark before expiring the identity map."""
 
         row = self.session.scalar(
             select(RuntimeBudgetTaskUsageRow)
@@ -164,8 +160,6 @@ class GovernedTaskRuntimeRepository(
             policy=policy,
             budget=budget,
         )
-        # Plan intent and its zero-value ledger commit together, so read-only
-        # budget observability never has to create execution state.
         self._ensure_ledger(plan["id"])
         return plan
 
