@@ -98,11 +98,14 @@ def test_durable_tool_step_replays_committed_command_after_crash(
 
     with UnitOfWork(app.state.database) as uow:
         artifacts = uow.artifacts.list(project["id"])
-        operations = uow.operations.list(
-            project_id=project["id"],
-            operation_type="artifact.create",
-            limit=20,
-        )
+        operations = [
+            operation
+            for operation in uow.operations.list(
+                project_id=project["id"],
+                limit=20,
+            )
+            if operation["operation_type"] == "artifact.create"
+        ]
         uow.agent_turns.finish_step(
             step["id"],
             "ok",
