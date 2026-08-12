@@ -205,6 +205,7 @@ def test_executor_repairs_events_after_terminal_commit_window(
     committed = {"done": False}
 
     def terminal_commit_runner(database, _settings, _engine, context, **_kwargs):
+        should_crash = False
         with UnitOfWork(database) as uow:
             stored = uow.agent_turns.get(turn["id"])
             if stored["status"] != "succeeded":
@@ -218,8 +219,12 @@ def test_executor_repairs_events_after_terminal_commit_window(
                     assistant_message_id=message["id"],
                 )
                 uow.agent_turns.set_status(turn["id"], "succeeded")
-                committed["done"] = True
-                raise BaseException("simulated process death")
+                should_crash = True
+        if should_crash:
+            committed["done"] = True
+            # The business transaction has committed. The process dies before
+            # RuntimeTaskEvent and RuntimeTask completion can be appended.
+            raise BaseException("simulated process death")
         return {
             "turn_id": turn["id"],
             "assistant_message_id": stored["assistant_message_id"],
