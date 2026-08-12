@@ -1,4 +1,5 @@
 import threading
+import time
 
 import pytest
 
@@ -99,17 +100,18 @@ def test_agent_wall_budget_is_checked_after_claim(app, project):
         key="agent-wall-budget",
         budget={"max_wall_seconds": 1},
     )
+    now = time.time() + 1
     claim = runtime.claim_next(
         "agent-wall-worker",
         kinds={AGENT_PLAN_KIND},
-        now=100,
+        now=now,
     )
     assert claim is not None
     context = _context(runtime, claim)
     token = bind_runtime_execution(context, turn_id="agent-wall-budget")
     try:
         with pytest.raises(RuntimeBudgetExceeded) as exceeded:
-            runtime.heartbeat(claim, now=102)
+            runtime.heartbeat(claim, now=now + 2)
     finally:
         reset_runtime_execution(token)
     assert exceeded.value.violation["dimension"] == "max_wall_seconds"
