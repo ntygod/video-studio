@@ -404,16 +404,21 @@ function PlanStepCard({
 export function RegenerationPlanModal({
     projectId,
     root,
+    existingPlanId = null,
     open,
     onClose,
 }: {
     projectId: string;
     root: ProjectArtifactFreshnessItem | null;
+    existingPlanId?: string | null;
     open: boolean;
     onClose: () => void;
 }) {
     const { message } = useApp();
-    const [planId, setPlanId] = useState<string | null>(null);
+    const rootArtifactId = root?.artifact_id || null;
+    const [planId, setPlanId] = useState<string | null>(
+        existingPlanId,
+    );
     const preview = usePreviewRegenerationCascade(projectId);
     const createPlan = useCreateRegenerationPlan(projectId);
     const planQuery = useRegenerationPlan(planId);
@@ -425,17 +430,23 @@ export function RegenerationPlanModal({
     const resetCreate = createPlan.reset;
 
     useEffect(() => {
-        if (!open || !root) return;
-        setPlanId(null);
+        if (!open) return;
         resetPreview();
         resetCreate();
+        if (existingPlanId) {
+            setPlanId(existingPlanId);
+            return;
+        }
+        setPlanId(null);
+        if (!rootArtifactId) return;
         void previewCascade({
-            artifact_ids: [root.artifact_id],
+            artifact_ids: [rootArtifactId],
             include_downstream: true,
         });
     }, [
         open,
-        root?.artifact_id,
+        existingPlanId,
+        rootArtifactId,
         previewCascade,
         resetPreview,
         resetCreate,
@@ -449,10 +460,10 @@ export function RegenerationPlanModal({
     const planMeta = plan ? regenerationPlanMeta(plan.status) : null;
 
     const create = async () => {
-        if (!root) return;
+        if (!rootArtifactId) return;
         try {
             const created = await createPlan.mutateAsync({
-                artifact_ids: [root.artifact_id],
+                artifact_ids: [rootArtifactId],
                 include_downstream: true,
             });
             setPlanId(created.id);
@@ -567,7 +578,9 @@ export function RegenerationPlanModal({
                         tone="faint"
                         className="mt-1"
                     >
-                        从 {root?.name || "当前内容"} 开始，按依赖顺序修复当前下游。
+                        {existingPlanId
+                            ? "查看或继续一个已经持久化的修复计划。"
+                            : `从 ${root?.name || "当前内容"} 开始，按依赖顺序修复当前下游。`}
                     </Text>
                 </div>
             }
@@ -597,9 +610,9 @@ export function RegenerationPlanModal({
                         size="sm"
                         icon={<RefreshCw className="size-3.5" />}
                         onClick={() => {
-                            if (!root) return;
+                            if (!rootArtifactId) return;
                             void preview.mutateAsync({
-                                artifact_ids: [root.artifact_id],
+                                artifact_ids: [rootArtifactId],
                                 include_downstream: true,
                             });
                         }}
@@ -631,7 +644,8 @@ export function RegenerationPlanModal({
                                 <StatusDot tone={planMeta.dotTone} />
                             ) : null}
                             <Text variant="body" tone="ink" weight={600}>
-                                {plan.summary.completed || 0}/{plan.summary.total || plan.steps?.length || 0} 步已完成
+                                {plan.summary.completed || 0}/
+                                {plan.summary.total || plan.steps?.length || 0} 步已完成
                             </Text>
                         </div>
                         {plan.status === "running" ? (
