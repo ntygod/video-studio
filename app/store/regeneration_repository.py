@@ -52,6 +52,7 @@ NONTERMINAL_STEP_STATUSES = STEP_STATUSES - TERMINAL_STEP_STATUSES
 CLAIMABLE_STEP_STATUSES = frozenset(
     {"ready", "waiting_for_predecessors"}
 )
+MAX_REGENERATION_RETRIES = 20
 
 
 def _normalized_statuses(
@@ -81,6 +82,8 @@ class RegenerationPlanRepository:
             "expected_version_id": row.expected_version_id,
             "action": row.action,
             "status": row.status,
+            "execution_attempt": row.execution_attempt,
+            "attempt_history": loads(row.attempt_history_json, []),
             "can_execute_automatically": row.can_execute_automatically,
             "depends_on_artifact_ids": loads(
                 row.depends_on_artifact_ids_json, []
@@ -114,6 +117,7 @@ class RegenerationPlanRepository:
             "id": row.id,
             "project_id": row.project_id,
             "status": row.status,
+            "execution_attempt": row.execution_attempt,
             "root_artifact_ids": loads(row.root_artifact_ids_json, []),
             "include_downstream": row.include_downstream,
             "snapshot_sha256": row.snapshot_sha256,
@@ -127,6 +131,26 @@ class RegenerationPlanRepository:
         if steps is not None:
             result["steps"] = [cls._step(step) for step in steps]
         return result
+
+    @staticmethod
+    def _summary(rows) -> dict[str, Any]:
+        counts: dict[str, int] = {}
+        for row in rows:
+            counts[row.status] = counts.get(row.status, 0) + 1
+        return {
+            "total": len(rows),
+            "automatable": sum(
+                1 for row in rows if row.can_execute_automatically
+            ),
+            "statuses": counts,
+            "completed": sum(
+                counts.get(status, 0)
+                for status in ("skipped", "succeeded")
+            ),
+            "failed": counts.get("failed", 0),
+            "canceled": counts.get("canceled", 0),
+            "claimed": sum(1 for row in rows if row.claim_token),
+        }
 
     def _plan_row(self, plan_id):
         row = self.session.get(RegenerationPlanRow, plan_id)
@@ -175,6 +199,7 @@ class RegenerationPlanRepository:
             id=new_id(),
             project_id=str(preview["project_id"]),
             status="draft",
+            execution_attempt=0,
             root_artifact_ids_json=dumps(
                 preview.get("root_artifact_ids") or []
             ),
@@ -218,6 +243,8 @@ class RegenerationPlanRepository:
                     ),
                     action=str(item.get("action") or "manual"),
                     status=status,
+                    execution_attempt=0,
+                    attempt_history_json="[]",
                     can_execute_automatically=bool(
                         item.get("can_execute_automatically")
                     ),
@@ -568,6 +595,171 @@ class RegenerationPlanRepository:
             return None
         return self.get_step(step_id)
 
+    def retry_failed_plan(
+        self,
+        plan_id: str,
+        *,
+        expected_execution_attempt: int,
+    ) -> dict[str, Any]:
+        """Reset failed Steps as one new, atomically claimed Plan attempt."""
+
+        plan = self._plan_row(plan_id)
+        expected_attempt = int(expected_execution_attempt)
+        if plan.status != "failed":
+            raise ConflictError(
+                f"only a failed regeneration plan can retry: {plan.status}"
+            )
+        if plan.execution_attempt != expected_attempt:
+            raise ConflictError(
+                "regeneration plan execution attempt changed"
+            )
+        if expected_attempt >= MAX_REGENERATION_RETRIES:
+            raise ConflictError(
+                "regeneration plan retry limit has been reached"
+            )
+
+        now = time.time()
+        rows = self._step_rows(plan_id)
+        failed_rows = [row for row in rows if row.status == "failed"]
+        if not failed_rows:
+            raise ConflictError(
+                "failed regeneration plan has no failed Steps"
+            )
+        if any(row.status in {"queued", "running"} for row in rows):
+            raise ConflictError(
+                "regeneration plan still has active child Jobs"
+            )
+        if any(row.status == "canceled" for row in rows):
+            raise ConflictError(
+                "a plan containing canceled Steps must be replanned"
+            )
+        if any(
+            row.claim_token
+            and (row.claim_until is None or row.claim_until > now)
+            for row in rows
+        ):
+            raise ConflictError(
+                "regeneration plan still has a live Step claim"
+            )
+
+        changed = self.session.execute(
+            update(RegenerationPlanRow)
+            .where(
+                RegenerationPlanRow.id == plan_id,
+                RegenerationPlanRow.status == "failed",
+                RegenerationPlanRow.execution_attempt
+                == expected_attempt,
+            )
+            .values(
+                status="running",
+                execution_attempt=(
+                    RegenerationPlanRow.execution_attempt + 1
+                ),
+                error="",
+                updated_at=now,
+                started_at=func.coalesce(
+                    RegenerationPlanRow.started_at,
+                    now,
+                ),
+                completed_at=None,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        if changed.rowcount != 1:
+            self.session.expire_all()
+            raise ConflictError(
+                "regeneration plan changed while retry was prepared"
+            )
+
+        self.session.execute(
+            update(RegenerationPlanStepRow)
+            .where(
+                RegenerationPlanStepRow.plan_id == plan_id,
+                RegenerationPlanStepRow.claim_token != "",
+                RegenerationPlanStepRow.claim_until.is_not(None),
+                RegenerationPlanStepRow.claim_until <= now,
+            )
+            .values(
+                claim_token="",
+                claim_owner="",
+                claim_until=None,
+                updated_at=now,
+            )
+            .execution_options(synchronize_session=False)
+        )
+
+        for row in failed_rows:
+            history = list(loads(row.attempt_history_json, []))
+            history.append(
+                {
+                    "attempt": row.execution_attempt,
+                    "status": row.status,
+                    "job_id": row.job_id,
+                    "source_job_id": row.source_job_id,
+                    "input": loads(row.input_json, {}),
+                    "result": loads(row.result_json, {}),
+                    "blockers": loads(row.blockers_json, []),
+                    "error": row.error,
+                    "started_at": row.started_at,
+                    "completed_at": row.completed_at,
+                    "recorded_at": now,
+                }
+            )
+            history = history[-MAX_REGENERATION_RETRIES:]
+            next_status = (
+                "waiting_for_predecessors"
+                if loads(row.depends_on_artifact_ids_json, [])
+                else "ready"
+            )
+            reset = self.session.execute(
+                update(RegenerationPlanStepRow)
+                .where(
+                    RegenerationPlanStepRow.id == row.id,
+                    RegenerationPlanStepRow.status == "failed",
+                    RegenerationPlanStepRow.execution_attempt
+                    == row.execution_attempt,
+                )
+                .values(
+                    status=next_status,
+                    execution_attempt=row.execution_attempt + 1,
+                    attempt_history_json=dumps(history),
+                    job_id=None,
+                    result_json="{}",
+                    blockers_json="[]",
+                    error="",
+                    claim_token="",
+                    claim_owner="",
+                    claim_until=None,
+                    updated_at=now,
+                    started_at=None,
+                    completed_at=None,
+                )
+                .execution_options(synchronize_session=False)
+            )
+            if reset.rowcount != 1:
+                raise ConflictError(
+                    "regeneration Step changed while retry was prepared"
+                )
+
+        self.session.expire_all()
+        current_rows = self._step_rows(plan_id)
+        self.session.execute(
+            update(RegenerationPlanRow)
+            .where(
+                RegenerationPlanRow.id == plan_id,
+                RegenerationPlanRow.status == "running",
+                RegenerationPlanRow.execution_attempt
+                == expected_attempt + 1,
+            )
+            .values(
+                summary_json=dumps(self._summary(current_rows)),
+                updated_at=now,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        self.session.expire_all()
+        return self.get(plan_id)
+
     def set_step_input(self, step_id, value, *, status):
         if status not in {"ready", "waiting_for_predecessors"}:
             raise ValueError(
@@ -620,6 +812,7 @@ class RegenerationPlanRepository:
 
 __all__ = [
     "CLAIMABLE_STEP_STATUSES",
+    "MAX_REGENERATION_RETRIES",
     "NONTERMINAL_PLAN_STATUSES",
     "NONTERMINAL_STEP_STATUSES",
     "PLAN_STATUSES",

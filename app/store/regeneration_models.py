@@ -37,6 +37,11 @@ class RegenerationPlanRow(Base):
         default="draft",
         index=True,
     )
+    execution_attempt: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
     root_artifact_ids_json: Mapped[str] = mapped_column(
         Text,
         nullable=False,
@@ -145,6 +150,16 @@ class RegenerationPlanStepRow(Base):
         String(50),
         nullable=False,
         index=True,
+    )
+    execution_attempt: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
+    )
+    attempt_history_json: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="[]",
     )
     can_execute_automatically: Mapped[bool] = mapped_column(
         Boolean,

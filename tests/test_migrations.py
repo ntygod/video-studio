@@ -65,6 +65,7 @@ def test_fresh_database_runs_all_migrations(tmp_path):
         assert {
             "snapshot_sha256",
             "status",
+            "execution_attempt",
             "started_at",
             "completed_at",
         } <= plan_columns
@@ -82,6 +83,8 @@ def test_fresh_database_runs_all_migrations(tmp_path):
             "claim_owner",
             "claim_until",
             "claim_attempt",
+            "execution_attempt",
+            "attempt_history_json",
             "input_json",
             "result_json",
         } <= step_columns
@@ -152,6 +155,13 @@ def test_pre_alembic_database_is_stamped_then_upgraded(tmp_path):
             "regeneration_plans",
             "regeneration_plan_steps",
         } <= tables
+        plan_columns = {
+            item["name"]
+            for item in inspect(database.engine).get_columns(
+                "regeneration_plans"
+            )
+        }
+        assert "execution_attempt" in plan_columns
         step_columns = {
             item["name"]
             for item in inspect(database.engine).get_columns(
@@ -163,6 +173,8 @@ def test_pre_alembic_database_is_stamped_then_upgraded(tmp_path):
             "claim_owner",
             "claim_until",
             "claim_attempt",
+            "execution_attempt",
+            "attempt_history_json",
         } <= step_columns
         with database.engine.connect() as connection:
             title = connection.execute(
