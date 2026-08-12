@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from app.application.commands.base import CommandValidationError
 from app.domain.artifact_registry import ArtifactSchemaError
 from app.store.repositories import ConflictError, NotFoundError
+from app.store.task_runtime_extensions import RuntimeAdmissionFull
 
 logger = logging.getLogger("video-studio.api")
 
@@ -20,6 +21,22 @@ def install_error_handlers(app: FastAPI) -> None:
             status_code=404,
             content={
                 "detail": f"resource not found: {exc.args[0]}"
+            },
+        )
+
+    @app.exception_handler(RuntimeAdmissionFull)
+    async def runtime_admission_full(
+        _request: Request,
+        exc: RuntimeAdmissionFull,
+    ):
+        return JSONResponse(
+            status_code=429,
+            headers={"Retry-After": "2"},
+            content={
+                "detail": str(exc),
+                "admission_key": exc.key,
+                "capacity": exc.capacity,
+                "active_count": exc.active_count,
             },
         )
 

@@ -14,7 +14,6 @@ from .repositories import (
 from .semantic_graph_repository import (
     SemanticArtifactGraphRepository,
 )
-from .task_runtime_repository import TaskRuntimeRepository
 from .unit_repository import SemanticUnitRepository
 
 
@@ -24,6 +23,12 @@ class UnitOfWork:
         self.session = None
 
     def __enter__(self):
+        # Keep runtime-control ORM registration lazy so pre-Alembic schema
+        # fixtures can still model the historical database accurately.
+        from .task_runtime_extensions import (
+            ControlledTaskRuntimeRepository,
+        )
+
         self.session = self.database.session_factory()
         self.projects = ProjectRepository(self.session)
         self.units = SemanticUnitRepository(self.session)
@@ -38,7 +43,7 @@ class UnitOfWork:
         self.regeneration_plans = RegenerationPlanRepository(
             self.session
         )
-        self.task_runtime = TaskRuntimeRepository(self.session)
+        self.task_runtime = ControlledTaskRuntimeRepository(self.session)
         self.artifact_graph = SemanticArtifactGraphRepository(
             self.session
         )

@@ -29,6 +29,30 @@ export function durableStreamCursor(event: StreamEvent): string | null {
     return String(event.id);
 }
 
+function durableSequence(cursor: string): number | null {
+    const match = cursor.match(/:(\d+)$/);
+    if (!match) return null;
+    const value = Number(match[1]);
+    return Number.isSafeInteger(value) ? value : null;
+}
+
+/**
+ * RuntimeTaskEvent 重放可能返回已存在事件的旧 seq。重连游标只能前进，
+ * 否则后续断线会从旧位置再次补发整段结构化事件。
+ */
+export function advanceDurableStreamCursor(
+    current: string,
+    event: StreamEvent,
+): string {
+    const candidate = durableStreamCursor(event);
+    if (!candidate) return current;
+    const candidateSequence = durableSequence(candidate);
+    const currentSequence = durableSequence(current);
+    if (candidateSequence === null) return current || candidate;
+    if (currentSequence === null) return candidate;
+    return candidateSequence >= currentSequence ? candidate : current;
+}
+
 /** 订阅一个 Agent 回合的事件流，返回取消函数。 */
 export function subscribeTurnStream<
     TEvent extends StreamEvent = StreamEvent,
@@ -67,8 +91,7 @@ export function subscribeTurnStream<
             } catch {
                 return;
             }
-            const cursor = durableStreamCursor(event);
-            if (cursor) lastEventId = cursor;
+            lastEventId = advanceDurableStreamCursor(lastEventId, event);
             handlers.onEvent(event);
             if (event.type === "done") close();
         };
