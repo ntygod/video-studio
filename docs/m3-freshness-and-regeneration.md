@@ -1,117 +1,110 @@
-# M3：Dependency、Provenance、Freshness 与修复
+# M3：Dependency、Provenance、Freshness 与持久化修复
 
-> 状态：版本依赖、素材阻塞、单点修复和级联预览闭环已成立。  
-> 日期：2026-08-12。  
-> 本文只描述当前已经成立的系统不变量，并明确尚未实现的执行边界。
+> 状态：精确输入、图传播、单点修复、级联预览、多进程执行、Retry 与 Replan 闭环已经成立。  
+> 日期：2026-08-12。
 
-## 1. 目标
+## 1. M3 回答的问题
 
-M3 回答五个可验证问题：
-
-1. 一个产物究竟使用了哪些不可变 ArtifactVersion 与 Asset？
-2. 上游前进或必需素材删除后，哪些当前产物已经不可信？
-3. 用户在哪里看到状态、原因和后续影响？
-4. 单个产物怎样安全修复并保持历史？
-5. 多个受影响产物应按什么顺序修复，哪些步骤不能自动执行？
+1. 一个产物使用了哪些不可变 ArtifactVersion 与 Asset？
+2. 上游前进或素材删除后，哪些当前产物已经不可信？
+3. 用户在哪里看到原因和后续影响？
+4. 单个产物怎样安全修复并保留历史？
+5. 多个产物应按什么顺序修复？
+6. 多进程、重启、失败重试和重新规划如何不产生重复写入？
 
 ## 2. 数据模型
 
 ### 2.1 ArtifactDependency
 
-依赖边连接精确上游版本与精确下游版本：
-
-```text
-upstream ArtifactVersion
-        ↓
-downstream ArtifactVersion
-```
-
-下游 Artifact ID 作为查询冗余字段保留。历史版本和历史边不可变，只有仍为当前版本的下游参与 Freshness 传播和级联预览。
+连接精确上游 ArtifactVersion 与精确下游 ArtifactVersion。历史版本和历史边不可变；只有下游仍为当前版本的边参与传播和执行计划。
 
 ### 2.2 AssetDependency
 
-AssetDependency 连接一个不可变 Asset 输入与一个 ArtifactVersion。上游 Asset ID 不使用外键级联删除；边中保存必要快照，因此 Asset 删除后依赖仍作为 tombstone 存在，可以解释：
-
-- 缺失的是哪个 Asset；
-- 原名称、类型和 Unit 作用域；
-- 哪个当前 ArtifactVersion 使用过它。
-
-项目、下游 Artifact 和下游版本仍使用正常级联约束。
+连接 Asset 输入与 ArtifactVersion。上游 Asset 删除后边保留 tombstone 快照，可解释原名称、类型、Unit 和受影响版本。
 
 ### 2.3 ArtifactProvenance
 
-每个派生版本最多一条 Provenance，记录：
+记录：
 
-- 精确 `input_version_ids`；
-- Provider 与 Model；
+- 精确输入版本；
+- Provider / Model；
 - Prompt version；
-- 参数与 seed；
-- Task attempt；
+- 参数、seed、attempt；
 - 负责持久化的 Operation。
-
-Provenance 用于审计，也用于判断旧产物是否具备安全重放路径。
 
 ### 2.4 ArtifactFreshness
 
-| 状态 | 当前语义 |
+| 状态 | 语义 |
 | --- | --- |
-| `fresh` | 当前版本没有已知失效输入 |
-| `stale` | 上游 Artifact 已经前进，当前版本仍基于旧版本 |
-| `blocked` | 必需 Asset 或上游 Artifact 输入缺失 / 阻塞 |
-| `needs_review` | 状态已注册，但自动进入与人工确认策略尚未完成 |
+| `fresh` | 没有已知失效输入 |
+| `stale` | 上游 Artifact 已前进，当前版本仍使用旧版本 |
+| `blocked` | 必需 Asset 或上游输入缺失 / 阻塞 |
+| `needs_review` | 状态已注册，确认继续流程尚未完成 |
+
+### 2.5 RegenerationPlan / Step / Replan
+
+Plan 冻结根选择、图快照、状态和执行 attempt。Step 冻结目标版本、拓扑、动作、输入、租约、Job、attempt history 与结果。Replan 表保存旧 Plan 到新 Plan 的不可变 lineage。
+
+Alembic 迁移链当前到：
+
+```text
+20260811_0005  AssetDependency
+20260812_0006  RegenerationPlan / Step
+20260812_0007  Step claim lease
+20260812_0008  Retry attempt history
+20260812_0009  Replan lineage
+```
 
 ## 3. 生产输入登记
 
 ### 3.1 LLM Artifact
 
-LLM Job 输出通过同一 Artifact 持久化 Operation 登记输入、Provenance 和新版本。选择性重新生成会把旧输入 Artifact 替换为当前版本，并保留仍存在的 Asset 输入。
+LLM Job 输出在同一个 Artifact 持久化 Operation 中登记输入、Provenance 与新版本。选择性重新生成会把旧上游 Artifact 替换为当前版本，并保留仍存在的 Asset 输入。
 
 ### 3.2 Agent 工具
 
-Agent 的 `write_artifact` 和 `generate_media` 接受：
+`write_artifact` 与 `generate_media` 接受：
 
 - `input_version_ids`；
 - `input_artifact_ids`；
 - `input_asset_ids`。
 
-系统还会读取当前 Turn 的显式 `context_refs` 和项目 `pinned_refs`。Artifact 引用在首次提交事务中冻结为当前版本，跨项目引用失败。
+系统还读取当前 Turn 的 `context_refs` 和项目 `pinned_refs`。Artifact 引用在首次提交事务中冻结为当前版本；跨项目输入失败。
 
-Unit、项目、Bible 与普通 Prompt 文本不会自动展开成依赖。详见 `docs/agent-explicit-production-inputs.md`。
+Unit、项目、Bible 与普通 Prompt 文本不会被猜测或展开为隐藏依赖。详见 `docs/agent-explicit-production-inputs.md`。
 
-`write_artifact` 创建一等 Artifact / Asset 依赖和 Provenance。媒体 Job 将输入冻结进 Job payload，并保留在输出 Asset 的 generation 元数据中；当前 Asset 输出还不是 Freshness 图节点。
+`write_artifact` 创建正式 Artifact / Asset 依赖和 Provenance。媒体 Job 将输入冻结进 Job payload，并保留在生成 Asset metadata 中；生成 Asset 当前还不是 Freshness 节点。
 
 ### 3.3 Timeline
 
-Timeline 编译登记实际采用的 edit plan 版本，以及每个 clip 实际使用的 Asset。素材替换后会追加 Timeline 新版本并登记新的 AssetDependency，旧版本 tombstone 保留。
+Timeline 编译登记实际采用的 edit plan 版本与 clip Asset。重编译或素材替换只追加新版本并登记新依赖，旧版本与 tombstone 保留。
 
 ## 4. 状态传播
 
-### 4.1 上游 Artifact 前进
+### 4.1 Artifact 前进
 
 上游追加新当前版本时：
 
-1. 上游自身恢复为 `fresh`；
-2. 查找使用其历史版本、且下游版本仍是当前版本的边；
-3. 将这些下游标记为 `stale`；
-4. 沿当前依赖图递归传播；
-5. 历史下游版本保持不变。
+1. 上游恢复 fresh；
+2. 查找仍为当前版本、但使用上游历史版本的下游；
+3. 标记 stale；
+4. 沿当前依赖图递归传播。
 
 ### 4.2 Asset 删除
 
-删除被当前 ArtifactVersion 使用的 Asset 时：
+删除被当前版本使用的 Asset 时：
 
-1. AssetDependency tombstone 保留；
-2. 直接下游进入 `blocked`；
-3. 缺失 Asset ID 沿 Artifact 依赖递归传播；
-4. 项目 Freshness 查询返回可解释的 `blocked_by_asset_ids`；
-5. 单元子树删除会在级联发生前先阻塞仍存活的外部下游。
+1. tombstone 保留；
+2. 直接下游进入 blocked；
+3. 缺失 Asset ID 沿 Artifact 图递归传播；
+4. 单元子树删除先阻塞仍存活的外部下游，再执行数据库级联。
 
 ### 4.3 图安全
 
-登记 Artifact 依赖时拒绝：
+拒绝：
 
-- 同一 Artifact 的自依赖；
-- 直接或间接依赖环；
+- 自依赖；
+- 直接或间接环；
 - 跨项目边；
 - 单次超过 500 个输入；
 - 项目超过 50,000 条 Artifact 边或 100,000 条 Asset 边。
@@ -129,107 +122,103 @@ GET  /api/projects/{project_id}/artifact-freshness
 POST /api/artifacts/{artifact_id}/regenerate
 POST /api/artifacts/{artifact_id}/repair-assets
 POST /api/projects/{project_id}/artifact-regeneration/preview
+POST /api/projects/{project_id}/artifact-regeneration/plans
+GET  /api/projects/{project_id}/artifact-regeneration/plans
+GET  /api/artifact-regeneration/plans/{plan_id}
+POST /api/artifact-regeneration/plans/{plan_id}/start
+POST /api/artifact-regeneration/plans/{plan_id}/retry
+POST /api/artifact-regeneration/plans/{plan_id}/replan
+GET  /api/artifact-regeneration/plans/{plan_id}/lineage
+POST /api/artifact-regeneration/steps/{step_id}/input
+POST /api/artifact-regeneration/plans/{plan_id}/cancel
 ```
 
-项目 Freshness 默认只返回需要处理的 Artifact；`include_fresh=true` 返回全部状态。默认处理优先级：
+项目 Freshness 默认只返回待处理内容，优先级为：
 
 ```text
 blocked → stale → needs_review → fresh
 ```
 
-## 6. 工作台
+## 6. 单点修复
 
-顶栏内容状态中心、Artifact 面板和结构树共享项目 Freshness 查询：
+### 6.1 LLM 选择性重新生成
 
-- 顶栏显示需要处理的数量；
-- 抽屉解释原因并可展开下游影响；
-- Artifact 面板标记 `stale / blocked / needs_review`；
-- `stale` 或 `blocked` 不能直接采用或锁定；
-- 结构树按 Unit 聚合最严重状态并提供“需处理”筛选；
-- 单个可重放 stale LLM Artifact 可以创建重新生成 Job。
+只接受 stale、未锁定、具备完整可重放来源、上游均 fresh 且 Asset 仍存在的 Artifact。保持 Artifact ID，只追加版本。默认幂等键包含目标当前版本。
 
-Timeline 素材替换目前有后端显式操作；完整的工作台选择器仍属于后续产品层。
+### 6.2 Timeline 素材修复与重编译
 
-## 7. 单个 Artifact 修复
+缺失素材修复要求完整兼容映射；普通 stale Timeline 可刷新当前上游后重新编译。两者均再次检查目标版本并追加新版本。
 
-### 7.1 LLM 选择性重新生成
+## 7. 级联预览
 
-`POST /api/artifacts/{id}/regenerate` 只接受：
+只读预览从根 Artifact 出发，可扩展当前下游，返回稳定拓扑、目标版本、动作、前驱、外部上游、blocker 和自动执行能力。预览不创建 Job、Operation、Plan 或版本。
 
-- Freshness 为 `stale`；
-- 当前版本未锁定；
-- 当前版本存在 Provenance；
-- 来源 Operation 由持久化 LLM Job 创建；
-- 原 Prompt 和 Job 仍存在；
-- 上游 Artifact 当前都是 fresh；
-- 必需 Asset 仍存在。
+详见 `docs/regeneration-cascade-preview.md`。
 
-成功后保持 Artifact ID，只追加新版本；新版本登记刷新后的精确输入并恢复 fresh。
+## 8. 持久化执行
 
-默认幂等键：
+协调器按拓扑释放 Step：
 
-```text
-artifact-regenerate:{artifact_id}:{expected_target_version_id}
-```
+- 数据库 CAS claim 决定多进程唯一 owner；
+- LLM Step 创建持久化子 Job 后立即释放协调器；
+- Timeline Step 执行本地幂等 Command；
+- 前驱失败或不可解决时后继 blocked；
+- Job 终态回调、应用启动和周期 reaper 共同恢复 running Plan；
+- claim token、状态 CAS 和 attempt ID 阻止迟到写入。
 
-持久化阶段再次检查目标版本，防止晚到模型结果越过人工修改。
+## 9. Retry 与 Replan
 
-### 7.2 Timeline 缺失素材修复
+### Retry
 
-`POST /api/artifacts/{id}/repair-assets` 要求为当前版本每个直接缺失 Asset 提供兼容替代。系统验证项目、Unit 作用域和素材类型，然后重新编译 Timeline、追加新版本并登记新依赖。重复请求通过目标版本和替换映射指纹重放同一结果。
+适用于图和目标仍正确、只是执行失败。只重置失败 Step，保留成功版本，并把旧失败快照写入 attempt history。新 attempt 使用新的 Operation key，旧 Job 回调不能覆盖当前 attempt。
 
-## 8. 级联修复预览
+### Replan
 
-`POST /api/projects/{id}/artifact-regeneration/preview` 是只读查询。它从用户选择的根 Artifact 出发，可沿当前下游扩展，最多处理 500 个节点，并返回：
+适用于图、目标版本或 blocker 已变化。重新读取当前图，原子终止旧执行意图，创建新 draft Plan，并登记唯一 lineage。旧 Plan 不能再 Start 或 Retry。
 
-- 稳定拓扑顺序；
-- 每一步冻结用的 expected current version；
-- 内部前驱与选择外上游；
-- `regenerate_llm / recompile_timeline / repair_timeline_assets / review / manual` 动作；
-- `ready / waiting / requires_input / blocked` 等执行状态；
-- 锁定、缺失 Provenance、来源不可重放、外部上游不新鲜和缺失素材等结构化 blocker。
+完整契约见 `docs/regeneration-plan-execution.md`。
 
-预览不创建 Job、Operation 或版本，不改变 Freshness。详细契约见 `docs/regeneration-cascade-preview.md`。
+## 10. 工作台
 
-## 9. 可观察性与幂等
+工作台提供：
+
+- Freshness 数量、原因、影响范围和版本深链；
+- 单项重新生成与级联预览；
+- Plan 创建、Start、Cancel；
+- 素材替换输入；
+- 运行状态与最近计划；
+- 失败 Retry、attempt history；
+- 当前图 Replan 与 lineage 导航。
+
+stale / blocked 内容不能直接采用或锁定。
+
+## 11. 可观察性与幂等
 
 - 所有写入通过 CommandBus / OperationLog；
-- 上游变化和 Asset 删除导致的 Freshness 副作用合并进原 Operation 的 affected entities；
+- Freshness 副作用合并进触发 Operation 的 affected entities；
 - 大 payload 只在业务表保存，OperationLog 使用指纹和稳定引用；
-- Job 输出持久化按 Job / 槽位重放；
+- Job 输出按 Job / 槽位重放；
 - Agent 工具按 turn / step 重放；
-- 单点重新生成与 Timeline 修复均冻结目标当前版本。
+- Plan Create / Replan 按 client intent token 重放；
+- Plan Step 按 attempt 级幂等键重放；
+- 目标版本在 Start、Retry、Timeline Command 和 Job 输出阶段重复校验。
 
-## 10. 当前边界
+## 12. 当前边界
 
 尚未完成：
 
-1. 级联预览的持久化 Plan / Step 与异步执行协调；
-2. worker 重启后的级联计划恢复、部分失败和取消语义；
-3. `needs_review` 的自动转换与人工确认流程；
-4. 故事结构 → 剧本 → 镜头方案 → 分镜等更多生产链自动登记；
-5. 将生成 Asset 建模为可传播 Freshness 的生产节点；
-6. 500 节点预览的性能基线和数据库级游标遍历；
-7. 工作台批量选择、素材替换输入和项目卡片摘要。
+1. 可配置的部分成功继续策略；
+2. `needs_review` 的确认与继续流程；
+3. 已完成 Step 的自动补偿；
+4. 外部 Provider 强制取消；
+5. 500 节点压力、故障注入和生产数据库竞争基线；
+6. 生成 Asset 的 Freshness 节点模型；
+7. 更多故事生产链的自动依赖登记。
 
-因此，不应把“可预览”描述成“已能可靠执行级联任务”，也不应把媒体 generation 元数据描述成完整 Asset 输出依赖图。
+## 13. 验收证据
 
-## 11. 验收证据
+自动测试覆盖精确输入、传播、图约束、单点修复、Agent 输入、拓扑预览、数据库 claim、双协调器、崩溃恢复、Retry、Replan、迁移、工作台状态函数，以及完整后端/前端/lint/设计检查/生产构建。
 
-自动测试覆盖：
+## 14. 回滚
 
-- 精确 ArtifactVersion / Asset 输入与 Provenance；
-- 上游新版本触发 stale；
-- Asset 删除和单元删除触发 blocked；
-- tombstone 仍能解释缺失素材；
-- 图自依赖、直接环、间接环和边数限制；
-- 单个 LLM Artifact 重新生成及并发版本冲突；
-- Timeline 素材替换、幂等与类型校验；
-- Agent 直接、Turn 和 pinned 输入冻结；
-- Agent 跨项目输入拒绝与步骤幂等；
-- 级联预览拓扑、等待、外部阻塞、素材输入和只读性；
-- 后端测试、前端测试、lint、设计检查与生产构建。
-
-## 12. 回滚
-
-查询与前端类型可独立回滚。已经持久化的 ArtifactVersion、Dependency、Provenance、Freshness 和 Operation 是历史事实，不应因代码回滚而删除。修复结果应通过版本恢复追加新版本，而不是改写历史。
+ArtifactVersion、Dependency、Provenance、Freshness、Plan、Step、Replan lineage 与 Operation 都是历史事实。代码回滚不会删除这些记录；内容恢复通过追加版本完成，不改写历史。
