@@ -1,5 +1,6 @@
 "use client";
 
+import { useRef } from "react";
 import {
     useMutation,
     useQuery,
@@ -22,6 +23,13 @@ import {
     type RegenerationPreviewInput,
 } from "@/services/api";
 import { qk } from "@/services/queries/keys";
+
+function newPlanClientToken(): string {
+    if (typeof globalThis.crypto?.randomUUID === "function") {
+        return globalThis.crypto.randomUUID();
+    }
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
 
 export function useProjectArtifactFreshness(
     projectId: string,
@@ -109,10 +117,19 @@ function useUpdatePlanCaches(projectId: string) {
 
 export function useCreateRegenerationPlan(projectId: string) {
     const update = useUpdatePlanCaches(projectId);
+    const tokenRef = useRef(newPlanClientToken());
     return useMutation({
         mutationFn: (input: RegenerationPreviewInput) =>
-            createRegenerationPlan(projectId, input),
-        onSuccess: update,
+            createRegenerationPlan(projectId, {
+                ...input,
+                client_token: input.client_token || tokenRef.current,
+            }),
+        onSuccess: (plan) => {
+            // A successful create completes this user intent. The next create
+            // gets a new token; failed retries keep using the old token.
+            tokenRef.current = newPlanClientToken();
+            update(plan);
+        },
     });
 }
 
