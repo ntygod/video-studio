@@ -137,6 +137,8 @@ export type RegenerationCascadePreview = {
 export type RegenerationPreviewInput = {
     artifact_ids: string[];
     include_downstream?: boolean;
+    /** Stable for retries of one create intent; ignored by preview. */
+    client_token?: string;
 };
 
 export type RegenerationPlanStatus =
@@ -257,6 +259,7 @@ export function createRegenerationPlan(
         {
             artifact_ids: input.artifact_ids,
             include_downstream: input.include_downstream ?? true,
+            client_token: input.client_token,
         },
     );
 }
