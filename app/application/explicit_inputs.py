@@ -36,8 +36,14 @@ def _pinned_refs(project: Any) -> list[dict[str, Any]]:
     ]
 
 
-def _turn_refs(uow, turn_id: str) -> list[dict[str, Any]]:
+def _turn_refs(
+    uow,
+    turn_id: str,
+    project_id: str,
+) -> list[dict[str, Any]]:
     turn = uow.agent_turns.get(turn_id)
+    if turn["project_id"] != project_id:
+        raise NotFoundError(turn_id)
     refs = turn.get("context_refs") or []
     return [
         normalized
@@ -171,7 +177,7 @@ def resolve_explicit_job_inputs(
     if turn_id:
         project = uow.projects.get(project_id)
         refs = [
-            *_turn_refs(uow, turn_id),
+            *_turn_refs(uow, turn_id, project_id),
             *_pinned_refs(project),
         ]
     for ref in refs:
