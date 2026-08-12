@@ -177,9 +177,7 @@ function PlanSummaryRow({
                     tone="faint"
                     className="mt-0.5 block"
                 >
-                    {completed}/{total || "—"} 步 · {new Date(
-                        plan.created_at * 1000,
-                    ).toLocaleString()}
+                    {completed}/{total || "—"} 步 · 快照 {plan.snapshot_sha256.slice(0, 8)}
                 </Text>
             </span>
             <Chip tone={meta.tone}>{meta.label}</Chip>
