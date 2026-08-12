@@ -84,11 +84,11 @@ export function useTurnStream(
             }
         };
 
-        const unsubscribe = subscribeTurnStream(
+        const unsubscribe = subscribeTurnStream<AgentTurnEvent>(
             conversationId,
             turnId,
             {
-                onEvent(event: AgentTurnEvent) {
+                onEvent(event) {
                     if (closed) return;
                     switch (event.type) {
                         case "token":

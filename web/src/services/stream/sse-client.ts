@@ -2,7 +2,7 @@
  * 单例 SSE 客户端：指数退避重连、Last-Event-ID 续传、done 后自动关闭。
  * <p>
  * EventSource 无法自定义请求头，因此 Last-Event-ID 通过 query 参数传给后端，
- * 后端按 last_event_id 从 agent_steps 补发历史事件。
+ * 后端按 last_event_id 从持久化 RuntimeTaskEvent 补发结构化事件。
  */
 
 const API_BASE = (process.env.NEXT_PUBLIC_SERVER_URL || "").replace(/\/+$/, "");
@@ -13,17 +13,19 @@ export type StreamEvent = {
     [key: string]: unknown;
 };
 
-export type StreamHandlers = {
-    onEvent: (event: StreamEvent) => void;
+export type StreamHandlers<TEvent extends StreamEvent = StreamEvent> = {
+    onEvent: (event: TEvent) => void;
     /** SSE 不可用（后端未就绪/代理不支持）时切换到轮询降级。 */
     onFallback: () => void;
 };
 
 /** 订阅一个 Agent 回合的事件流，返回取消函数。 */
-export function subscribeTurnStream(
+export function subscribeTurnStream<
+    TEvent extends StreamEvent = StreamEvent,
+>(
     conversationId: string,
     turnId: string,
-    handlers: StreamHandlers,
+    handlers: StreamHandlers<TEvent>,
 ): () => void {
     let closed = false;
     let source: EventSource | null = null;
@@ -49,9 +51,9 @@ export function subscribeTurnStream(
         source.onmessage = (message) => {
             if (closed) return;
             receivedAny = true;
-            let event: StreamEvent;
+            let event: TEvent;
             try {
-                event = JSON.parse(message.data) as StreamEvent;
+                event = JSON.parse(message.data) as TEvent;
             } catch {
                 return;
             }

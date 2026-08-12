@@ -192,16 +192,28 @@ export type AgentTurn = {
     created_at: number;
     updated_at: number;
     steps?: TurnStep[];
+    runtime_plan_id?: string;
+    runtime_status?: string;
 };
 
 export type StartTurnResult = {
     turn_id: string;
+    runtime_plan_id: string;
     user_message: ConversationMessage;
 };
 
 export type AgentTurnEvent = {
     id?: string;
-    type: "step.start" | "step.done" | "token" | "proposal" | "entity" | "error" | "done";
+    seq?: number;
+    type:
+        | "step.start"
+        | "step.done"
+        | "token"
+        | "message"
+        | "proposal"
+        | "entity"
+        | "error"
+        | "done";
     step_id?: string;
     tool?: string;
     args_preview?: string;
@@ -217,6 +229,8 @@ export type AgentTurnEvent = {
     usage?: { prompt: number; completion: number };
     canceled?: boolean;
     failed?: boolean;
+    durable?: boolean;
+    [key: string]: unknown;
 };
 
 export type ProviderModel = {
