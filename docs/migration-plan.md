@@ -26,8 +26,9 @@
 ### M0.3 后续可靠性
 
 - [x] 修复 Agent 新建 Artifact 的可靠回合撤销；
-- [x] Agent 回合进入固定 worker 与有界队列；
-- [ ] 持久化流式输出 checkpoint；
+- [x] Agent 回合进入固定 worker 与有界队列；该内存执行器已在 M4 被持久化 Runtime 取代；
+- [x] Agent 结构化流与最终消息具备持久化 checkpoint / 续读；
+- [ ] token 级持久化流输出；
 - [ ] 把 Python 内存分页改为数据库游标分页；
 - [ ] 建立通用故障注入基线。
 
@@ -54,7 +55,7 @@
 - [x] `operation_logs` 与 Alembic 迁移；
 - [x] CommandBus 支持业务幂等、前置条件、风险、影响实体和失败审计；
 - [x] Artifact、提案、项目、单元、Asset、Timeline、Job 等核心写路径收口；
-- [x] Agent mutating tools 只调用 Command API，并按 turn / step 幂等；
+- [x] Agent mutating tools 只调用 Command API，并按稳定 logical tool call 幂等；
 - [x] LLM、媒体、TTS、渲染与批量输出按 Job / 槽位幂等持久化；
 - [x] 启动恢复 interrupted Operation 与媒体中断状态；
 - [x] 暴露 OperationLog 查询和安全补偿 API；
@@ -115,35 +116,45 @@
 
 ### 已完成
 
-- [x] Alembic `20260812_0010` 增加通用 RuntimePlan / RuntimeTask / RuntimeTaskAttempt / RuntimeTaskEvent；
+- [x] Alembic `20260812_0010` 增加 RuntimePlan / RuntimeTask / RuntimeTaskAttempt / RuntimeTaskEvent；
 - [x] Task DAG 验证、前驱释放与 blocked 传播；
-- [x] 数据库级 claim、lease、heartbeat、checkpoint 与迟到写入拒绝；
+- [x] 数据库 claim、lease、heartbeat、checkpoint 与迟到写入拒绝；
 - [x] Attempt history、retryable failure、backoff 与 max attempts；
 - [x] timeout、Cancel 与 lease-expired crash recovery；
 - [x] Plan 内单调事件序号和 `after_seq` 续读；
-- [x] `TaskRuntime` 内部应用接口；
+- [x] 并发幂等 Plan 创建；
+- [x] 通用 Handler registry、固定 worker、自动 heartbeat / reaper 与 fail-closed；
 - [x] Plan、Task 与 Event 的只读可观察 API；
-- [x] 并发、恢复、重试、超时、取消、DAG、事件和 fresh / legacy 迁移测试。
+- [x] Agent Turn 创建与 RuntimePlan / Task 原子提交；
+- [x] Agent tool-loop 的 model / tools / finalize checkpoint；
+- [x] 冻结 Provider / Model，恢复时显式使用原 model ID；
+- [x] 跨 Attempt 稳定 logical tool call ID 与 Operation 幂等键；
+- [x] Command 已提交、Step / checkpoint 未提交时的 exactly-once 恢复；
+- [x] Agent Turn 进入通用 RuntimeTask worker；
+- [x] 应用 startup 无浏览器参与恢复 queued / interrupted Turn；
+- [x] RuntimeTaskEvent 驱动 Agent SSE 断线续读；
+- [x] 非持久 live token 与 Last-Event-ID 隔离；
+- [x] final assistant message、终态事实与缺失事件修复；
+- [x] Agent Cancel 同时终止 Turn、Plan、Task 与 Attempt；
+- [x] fresh / legacy 迁移、并发、崩溃注入、前后端和生产构建测试。
 
 ### 下一步
 
-- [ ] Agent tool-loop 的持久化 checkpoint；
-- [ ] 跨 Attempt 稳定 logical tool call ID 与 Operation 幂等键；
-- [ ] Agent Turn 进入通用 RuntimeTask worker；
-- [ ] RuntimeTaskEvent 驱动 Agent SSE 断线续读；
-- [ ] 通用 Worker / Handler registry；
 - [ ] Planner、Executor、Reviewer、Repair 分层；
-- [ ] PolicyDecision 与高风险动作确认；
-- [ ] 预算、Usage 和 timeout 的执行期强制；
-- [ ] 通用 Replan lineage；
-- [ ] PostgreSQL 多进程竞争与故障注入基线。
+- [ ] PolicyDecision 与高风险动作确认 Task；
+- [ ] token、成本、步骤数与媒体预算的执行期硬限制；
+- [ ] 通用 RuntimePlan Replan lineage；
+- [ ] 通用 Task compensation；
+- [ ] token 级持久化流输出；
+- [ ] PostgreSQL 多进程、网络分区和大规模故障注入基线；
+- [ ] 在通用 Runtime 稳定后评估 RegenerationPlan 适配，避免双写。
 
 详细设计：
 
 - `docs/task-runtime.md`
 - `docs/implementation-log-m4-20260812.md`
 
-**M4 验收状态：** 通用持久化执行内核已经建立，但尚未接管 Agent。完整验收仍要求 Agent 崩溃后从 checkpoint 恢复且不产生重复实体，高风险动作必须经过 Policy 确认。
+**M4 验收状态：** 通用持久化执行内核和 Agent Turn 首个生产闭环已经成立。Agent 在工具副作用、进程重启、断线续读、取消和终态提交窗口内具备可验证恢复；完整 Agent 2.0 仍需 Planner/Reviewer、PolicyDecision 与预算治理。
 
 ## M5 · Evaluator 与 Golden Projects
 
