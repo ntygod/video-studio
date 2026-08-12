@@ -1,4 +1,5 @@
 import threading
+import time
 
 import pytest
 
@@ -149,19 +150,20 @@ def test_policy_authorization_rejects_stale_attempt_without_consumption(
 ):
     runtime = GovernedTaskRuntime(app.state.database)
     plan = _plan(app, project["id"], key="stale-policy-claim")
+    now = time.time() + 1
     old = runtime.claim_next(
         "stale-policy-old",
         kinds={AGENT_PLAN_KIND},
         lease_seconds=2,
-        now=100,
+        now=now,
     )
     assert old is not None
-    assert runtime.recover(kinds={AGENT_PLAN_KIND}, now=103) == 1
+    assert runtime.recover(kinds={AGENT_PLAN_KIND}, now=now + 3) == 1
     current = runtime.claim_next(
         "stale-policy-new",
         kinds={AGENT_PLAN_KIND},
         lease_seconds=10,
-        now=104,
+        now=now + 4,
     )
     assert current is not None
 
