@@ -16,6 +16,17 @@ from app.store.repositories import NotFoundError
 
 from .base import CommandValidationError, OperationExecution
 
+INPUT_AWARE_JOB_TYPES = frozenset(
+    {
+        "generate",
+        "llm",
+        "media",
+        "tts",
+        "voice_synthesis",
+        "render",
+    }
+)
+
 
 def _semantic_value(value: Any) -> Any:
     """Remove tracing-only metadata from idempotency fingerprints."""
@@ -106,7 +117,10 @@ class CreateJobCommand:
 
     def execute(self, uow: UnitOfWork) -> OperationExecution:
         payload = deepcopy(self.payload)
-        if self.turn_id and self.job_type == "generate":
+        if (
+            self.turn_id
+            and self.job_type in INPUT_AWARE_JOB_TYPES
+        ):
             input_version_ids, input_asset_ids = (
                 resolve_explicit_job_inputs(
                     uow,
@@ -115,10 +129,18 @@ class CreateJobCommand:
                     payload,
                 )
             )
-            if input_version_ids:
+            # Persist the exact resolved sets, including an explicit empty set
+            # when a caller supplied input fields. This prevents a retry from
+            # reinterpreting mutable Artifact "current" pointers.
+            if (
+                input_version_ids
+                or "input_version_ids" in payload
+                or "input_artifact_ids" in payload
+            ):
                 payload["input_version_ids"] = input_version_ids
-            if input_asset_ids:
+            if input_asset_ids or "input_asset_ids" in payload:
                 payload["input_asset_ids"] = input_asset_ids
+            payload.pop("input_artifact_ids", None)
 
         job = uow.jobs.create(
             {
@@ -151,3 +173,6 @@ class CreateJobCommand:
         return uow.jobs.get(
             str((audit_result or {})["job_id"])
         )
+
+
+__all__ = ["CreateJobCommand", "INPUT_AWARE_JOB_TYPES"]
