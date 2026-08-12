@@ -1,3 +1,5 @@
+import hashlib
+import json
 from dataclasses import replace
 from typing import Any
 
@@ -7,14 +9,22 @@ from pydantic import BaseModel, Field, model_validator
 from app.api.command_context import command_context
 from app.api.logging import current_request_id
 from app.application.commands import (
+    CancelRegenerationPlanCommand,
     CreateJobCommand,
+    CreateRegenerationPlanCommand,
     RegisterArtifactDerivationCommand,
+    SetRegenerationPlanStepInputCommand,
+    StartRegenerationPlanCommand,
     get_command_bus,
 )
 from app.application.freshness_service import (
     list_project_artifact_freshness,
 )
 from app.application.job_engine import get_job_engine
+from app.application.regeneration_plan_service import (
+    advance_regeneration_plan,
+    regeneration_preview_snapshot_sha256,
+)
 from app.application.regeneration_preview_service import (
     preview_regeneration_cascade,
 )
@@ -55,6 +65,30 @@ class RegenerationPreviewRequest(BaseModel):
         max_length=500,
     )
     include_downstream: bool = True
+
+
+class RegenerationStepInputRequest(BaseModel):
+    replacements: dict[str, str] = Field(
+        min_length=1,
+        max_length=500,
+    )
+
+
+def _context_with_default_key(request: Request, key: str):
+    context = command_context(request)
+    if context.idempotency_key:
+        return context
+    return replace(context, idempotency_key=key)
+
+
+def _mapping_sha256(value: dict[str, str]) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 @router.post(
@@ -111,6 +145,135 @@ def preview_project_regeneration(
             data.artifact_ids,
             include_downstream=data.include_downstream,
         )
+
+
+@router.post(
+    "/api/projects/{project_id}/artifact-regeneration/plans",
+    status_code=201,
+)
+def create_regeneration_plan(
+    project_id: str,
+    data: RegenerationPreviewRequest,
+    request: Request,
+):
+    with UnitOfWork(request.app.state.database) as uow:
+        preview = preview_regeneration_cascade(
+            uow,
+            project_id,
+            data.artifact_ids,
+            include_downstream=data.include_downstream,
+        )
+    snapshot = regeneration_preview_snapshot_sha256(preview)
+    execution = get_command_bus(request.app).execute(
+        CreateRegenerationPlanCommand(
+            project_id=project_id,
+            artifact_ids=data.artifact_ids,
+            include_downstream=data.include_downstream,
+            expected_snapshot_sha256=snapshot,
+        ),
+        _context_with_default_key(
+            request,
+            f"regeneration-plan-create:{project_id}:{snapshot}",
+        ),
+    )
+    return execution.result
+
+
+@router.get(
+    "/api/projects/{project_id}/artifact-regeneration/plans"
+)
+def list_regeneration_plans(
+    project_id: str,
+    request: Request,
+    limit: int = 100,
+):
+    with UnitOfWork(request.app.state.database) as uow:
+        uow.projects.get(project_id)
+        return uow.regeneration_plans.list(
+            project_id,
+            limit=limit,
+        )
+
+
+@router.get("/api/artifact-regeneration/plans/{plan_id}")
+def get_regeneration_plan(plan_id: str, request: Request):
+    with UnitOfWork(request.app.state.database) as uow:
+        return uow.regeneration_plans.get(plan_id)
+
+
+@router.post(
+    "/api/artifact-regeneration/plans/{plan_id}/start"
+)
+def start_regeneration_plan(plan_id: str, request: Request):
+    with UnitOfWork(request.app.state.database) as uow:
+        plan = uow.regeneration_plans.get(plan_id)
+    get_command_bus(request.app).execute(
+        StartRegenerationPlanCommand(
+            plan_id=plan_id,
+            expected_snapshot_sha256=plan["snapshot_sha256"],
+        ),
+        _context_with_default_key(
+            request,
+            f"regeneration-plan-start:{plan_id}:"
+            f"{plan['snapshot_sha256']}",
+        ),
+    )
+    return advance_regeneration_plan(
+        request.app.state.database,
+        plan_id,
+        get_job_engine(request.app),
+    )
+
+
+@router.post(
+    "/api/artifact-regeneration/steps/{step_id}/input"
+)
+def set_regeneration_step_input(
+    step_id: str,
+    data: RegenerationStepInputRequest,
+    request: Request,
+):
+    execution = get_command_bus(request.app).execute(
+        SetRegenerationPlanStepInputCommand(
+            step_id=step_id,
+            replacements=data.replacements,
+        ),
+        _context_with_default_key(
+            request,
+            f"regeneration-step-input:{step_id}:"
+            f"{_mapping_sha256(data.replacements)}",
+        ),
+    )
+    step = execution.result
+    with UnitOfWork(request.app.state.database) as uow:
+        plan = uow.regeneration_plans.get(step["plan_id"])
+    if plan["status"] == "running":
+        return advance_regeneration_plan(
+            request.app.state.database,
+            plan["id"],
+            get_job_engine(request.app),
+        )
+    return plan
+
+
+@router.post(
+    "/api/artifact-regeneration/plans/{plan_id}/cancel"
+)
+def cancel_regeneration_plan(plan_id: str, request: Request):
+    execution = get_command_bus(request.app).execute(
+        CancelRegenerationPlanCommand(plan_id=plan_id),
+        _context_with_default_key(
+            request,
+            f"regeneration-plan-cancel:{plan_id}",
+        ),
+    )
+    plan = execution.result
+    engine = getattr(request.app.state, "job_engine", None)
+    if engine is not None:
+        for step in plan.get("steps") or []:
+            if step.get("job_id"):
+                engine.cancel(step["job_id"])
+    return plan
 
 
 @router.post(
