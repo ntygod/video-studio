@@ -174,7 +174,7 @@ def test_agent_structural_events_use_semantic_dedupe_identity(
     app,
     project,
 ):
-    runtime = TaskRuntimf(app.state.database)
+    runtime = TaskRuntime(app.state.database)
     plan = runtime.create_plan(
         project_id=project["id"],
         kind=AGENT_PLAN_KIND,
@@ -205,4 +205,72 @@ def test_agent_structural_events_use_semantic_dedupe_identity(
     assert replay["deduplicated"] is True
     stored = [
         event
-        for event¥¸ÉÕ¹Ñ¥µ”¹•Ù•¹ÑÌ¡Á±…¹l‰¥‰t¤(€€€€€€€¥˜•Ù•¹Ñl‰•Ù•¹Ñ}ÑåÁ”‰t€ôô€‰…•¹Ğ¹ÍÑ•À¹ÍÑ…ÉĞˆ(€€€€€€€…¹•Ù•¹Ñl‰Á…å±½…‰t¹•Ğ ‰ÍÑ•Á}¥ˆ¤€ôô€‰ÍÑ…‰±”µÍÑ•À´Äˆ(€€€t(€€€…ÍÍ•ÉĞ±•¸¡ÍÑ½É•¤€ôô€Ä(€€€ÉÕ¹Ñ¥µ”¹…¹•°¡Á±…¹l‰¥‰t°É•…Í½¸ô‰±•…¹ÕÀˆ¤(()‘•˜Ñ•ÍÑ}ÑÕÉ¹}…Á¥}É•ÑÕÉ¹Í|ĞÈå}İ¥Ñ¡½ÕÑ}Á…ÉÑ¥…±}µ•ÍÍ…•}İ¡•¹}…•¹Ñ}™Õ±° (€€€…ÁÀ°(€€€±¥•¹Ğ°(€€€ÁÉ½©•Ğ°(¤è(€€€ÉÕ¹Ñ¥µ”€ôQ…Í­IÕ¹Ñ¥µ˜¡…ÁÀ¹ÍÑ…Ñ”¹‘…Ñ…‰…Í”¤(€€€İ¥Ñ U¹¥Ñ=™]½É¬¡…ÁÀ¹ÍÑ…Ñ”¹‘…Ñ…‰…Í”¤…ÌÕ½Üè(€€€€€€€Õ½Ü¹Ñ…Í­}ÉÕ¹Ñ¥µ”¹½¹™¥ÕÉ•}…‘µ¥ÍÍ¥½¸¡9Q}A19}-%9°€Ä¤((€€€‰±½­•È€ôÉÕ¹Ñ¥µ”¹É•…Ñ•}Á±…¸ (€€€€€€€ÁÉ½©•Ñ}¥õÁÉ½©•Ñl‰¥‰t°(€€€€€€€­¥¹õ9Q}A19}-%9°(€€€€€€€ÍÕ‰©•Ñ}ÑåÁ”ô‰Ñ•ÍĞˆ°(€€€€€€€ÍÕ‰©•Ñ}¥ô‰…Á¤µ‰±½­•Èˆ°(€€€€€€€¥‘•µÁ½Ñ•¹å}­•äô‰…‘µ¥ÍÍ¥½¸é…Á¤µ‰±½­•Èˆ°(€€€€€€€Ñ…Í­Ìõm}Ñ…Í¬¡…Ù…¥±…‰±•}…ĞõÑ¥µ”¹Ñ¥µ” ¤€¬€ÌØÀÀ¥t°(€€€€¤(€€€½¹Ù•ÉÍ…Ñ¥½¸€ô±¥•¹Ğ¹Á½ÍĞ (€€€€€€€˜ˆ½…Á¤½ÁÉ½©•ÑÌ½íÁÉ½©•Ñl¥uô½½¹Ù•ÉÍ…Ñ¥½¹Ìˆ°(€€€€€€€©Í½¸õì‰Ñ¥Ñ±”ˆè€‹–º{¦3š.Kîp‰ô°(€€€€¤¹©Í½¸ ¤((€€€É•ÍÁ½¹Í”€ô±¥•¹Ğ¹Á½ÍĞ (€€€€€€€˜ˆ½…Á¤½½¹Ù•ÉÍ…Ñ¥½¹Ì½í½¹Ù•ÉÍ…Ñ¥½¹l¥uô½ÑÕÉ¹Ìˆ°(€€€€€€€©Í½¸õì‰½¹Ñ•¹Ğˆè€‹¢şgš‚–âãš"Gî“š"@‰ô°(€€€€¤(€€€…ÍÍ•ÉĞÉ•ÍÁ½¹Í”¹ÍÑ…ÑÕÍ}½‘”€ôô€ĞÈä(€€€…ÍÍ•ÉĞÉ•ÍÁ½¹Í”¹¡•…‘•ÉÍl‰É•ÑÉäµ…™Ñ•È‰t€ôô€ˆÈˆ(€€€…ÍÍ•ÉĞÉ•ÍÁ½¹Í”¹©Í½¸ ¥l‰…Á…¥Ñä‰t€ôô€Ä(€€€İ¥Ñ U¹¥Ñ=™]½É¬¡…ÁÀ¹ÍÑ…Ñ”¹‘…Ñ…‰…Í”¤…ÌÕ½Üè(€€€€€€€µ•ÍÍ…•Ì€ôÕ½Ü¹½¹Ù•ÉÍ…Ñ¥½¹Ì¹±¥ÍÑ}µ•ÍÍ…•Ì¡½¹Ù•ÉÍ…Ñ¥½¹l‰¥‰t¤(€€€…ÍÍ•ÉĞµ•ÍÍ…•Ì€ôômt(€€€ÉÕ¹Ñ¥µ”¹…¹•°¡‰±½­•Él‰¥‰t°É•…Í½¸ô‰±•…¹ÕÀˆ¤(()‘•˜Ñ•ÍÑ}™É•Í¡}‘…Ñ…‰…Í•}¥¹ÍÑ…±±Í}ÉÕ¹Ñ¥µ•}½¹ÑÉ½±}Ñ…‰±•Ì¡ÑµÁ}Á…Ñ ¤è(€€€‘…Ñ…‰…Í”€ô…Ñ…‰…Í” (€€€€€€€˜‰ÍÅ±¥Ñ”è¼¼½ì¡ÑµÁ}Á…Ñ €¼€ÉÕ¹Ñ¥µ”µ½¹ÑÉ½±Ì¹‘ˆœ¤¹…Í}Á½Í¥à ¥ôˆ(€€€€€¤(€€€ÑÉäè(€€€€€€€‘…Ñ…‰…Í”¹É•…Ñ•}Í¡•µ„ ¤(€€€€€€€¥¹ÍÁ•Ñ½È€ô¥¹ÍÁ•Ğ¡‘…Ñ…‰…Í”¹•¹¥¹”¤(€€€€€€€Ñ…‰±•Ì€ôÍ•Ğ¡¥¹ÍÁ•Ñ½È¹•Ñ}Ñ…‰±•}¹…µ•Ì ¤¤(€€€€€€€…ÍÍ•ÉĞì(€€€€€€€€€€€€‰ÉÕ¹Ñ¥µ•}…‘µ¥ÍÍ¥½¹}‰Õ­•ÑÌˆ°(€€€€€€€€€€€€‰ÉÕ¹Ñ¥µ•}…‘µ¥ÍÍ¥½¹}É•Í•ÉÙ…Ñ¥½¹Ìˆ°(€€€€€€€€€€€€‰ÉÕ¹Ñ¥µ•}•Ù•¹Ñ}‘•‘ÕÁ•Ìˆ°(€€€€€€€ô€ğôÑ…‰±•Ì(€€€€€€€É•Í•ÉÙ…Ñ¥½¹}¥¹‘•á•Ì€ôì(€€€€€€€€€€€¥Ñ•µl‰¹…µ”‰t(€€€€€€€€€€€™½È¥Ñ•´¥¸¥¹ÍÁ•Ñ½È¹•Ñ}¥¹‘•á•Ì (€€€€€€€€€€€€€€€€‰ÉÕ¹Ñ¥µ•}…‘µ¥ÍÍ¥½¹}É•Í•ÉÙ…Ñ¥½¹Ìˆ(€€€€€€€€€€€€¤(€€€€€€€ô(€€€€€€€…ÍÍ•ÉĞ€‰ÕÅ}ÉÕ¹Ñ¥µ•}…‘µ¥ÍÍ¥½¹}…Ñ¥Ù•}Í±½Ğˆ¥¸É•Í•ÉÙ…Ñ¥½¹}¥¹‘•á•Ì(€€€€€€€İ¥Ñ U¹¥Ñ=™]½É¬¡‘…Ñ…‰…Í”¤…ÌÕ½Üè(€€€€€€€€€€€ÍÑ…Ñ”€ôÕ½Ü¹Ñ…Í­}ÉÕ¹Ñ¥µ”¹…‘µ¥ÍÍ¥½¹}ÍÑ…Ñ”¡9Q}A19}-%9¤(€€€€€€€…ÍÍ•ÉĞÍÑ…Ñ•l‰…Á…¥Ñä‰t€ôô€ÄÀ(€€€€€€€…ÍÍ•ÉĞÍÑ…Ñ•l‰…Ñ¥Ù•}½Õ¹Ğ‰t€ôô€À(€€€™¥¹…±±äè(€€€€€€€‘…Ñ…‰…Í”¹•¹¥¹”¹‘¥ÍÁ½Í” ¤
+        for event in runtime.events(plan["id"])
+        if event["event_type"] == "agent.step.start"
+        and event["payload"].get("step_id") == "stable-step-1"
+    ]
+    assert len(stored) == 1
+    runtime.cancel(plan["id"], reason="cleanup")
+
+
+def test_turn_api_returns_429_without_partial_message_when_agent_full(
+    app,
+    client,
+    project,
+):
+    runtime = TaskRuntime(app.state.database)
+    with UnitOfWork(app.state.database) as uow:
+        uow.task_runtime.configure_admission(AGENT_PLAN_KIND, 1)
+
+    blocker = runtime.create_plan(
+        project_id=project["id"],
+        kind=AGENT_PLAN_KIND,
+        subject_type="test",
+        subject_id="api-blocker",
+        idempotency_key="admission:api-blocker",
+        tasks=[_task(available_at=time.time() + 3600)],
+    )
+    conversation = client.post(
+        f"/api/projects/{project['id']}/conversations",
+        json={"title": "å®¹é‡æ‹’ç»"},
+    ).json()
+
+    response = client.post(
+        f"/api/conversations/{conversation['id']}/turns",
+        json={"content": "è¿™æ¡æ¶ˆæ¯å¿…é¡»æ•´ä½“å›æ»š"},
+    )
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "2"
+    assert response.json()["capacity"] == 1
+    with UnitOfWork(app.state.database) as uow:
+        messages = uow.conversations.list_messages(conversation["id"])
+    assert messages == []
+    runtime.cancel(blocker["id"], reason="cleanup")
+
+
+def test_fresh_database_installs_runtime_control_tables(tmp_path):
+    database = Database(
+        f"sqlite:///{(tmp_path / 'runtime-controls.db').as_posix()}"
+    )
+    try:
+        database.create_schema()
+        inspector = inspect(database.engine)
+        tables = set(inspector.get_table_names())
+        assert {
+            "runtime_admission_buckets",
+            "runtime_admission_reservations",
+            "runtime_event_dedupes",
+        } <= tables
+        reservation_indexes = {
+            item["name"]
+            for item in inspector.get_indexes(
+                "runtime_admission_reservations"
+            )
+        }
+        assert "uq_runtime_admission_active_slot" in reservation_indexes
+        with UnitOfWork(database) as uow:
+            state = uow.task_runtime.admission_state(AGENT_PLAN_KIND)
+        assert state["capacity"] == 10
+        assert state["active_count"] == 0
+    finally:
+        database.engine.dispose()
