@@ -10,6 +10,7 @@ const API_BASE = (process.env.NEXT_PUBLIC_SERVER_URL || "").replace(/\/+$/, "");
 export type StreamEvent = {
     id?: string;
     type: string;
+    durable?: boolean;
     [key: string]: unknown;
 };
 
@@ -18,6 +19,15 @@ export type StreamHandlers<TEvent extends StreamEvent = StreamEvent> = {
     /** SSE 不可用（后端未就绪/代理不支持）时切换到轮询降级。 */
     onFallback: () => void;
 };
+
+/**
+ * 只有持久化事件才能成为重连游标。实时 token 即使带有本地展示 ID，
+ * 也不能覆盖 RuntimeTaskEvent 的单调序号，否则重连会退回整段重放。
+ */
+export function durableStreamCursor(event: StreamEvent): string | null {
+    if (!event.id || event.durable === false) return null;
+    return String(event.id);
+}
 
 /** 订阅一个 Agent 回合的事件流，返回取消函数。 */
 export function subscribeTurnStream<
@@ -57,7 +67,8 @@ export function subscribeTurnStream<
             } catch {
                 return;
             }
-            if (event.id) lastEventId = String(event.id);
+            const cursor = durableStreamCursor(event);
+            if (cursor) lastEventId = cursor;
             handlers.onEvent(event);
             if (event.type === "done") close();
         };
