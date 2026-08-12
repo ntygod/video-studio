@@ -14,6 +14,7 @@ from .repositories import (
 from .semantic_graph_repository import (
     SemanticArtifactGraphRepository,
 )
+from .task_runtime_repository import TaskRuntimeRepository
 from .unit_repository import SemanticUnitRepository
 
 
@@ -37,6 +38,7 @@ class UnitOfWork:
         self.regeneration_plans = RegenerationPlanRepository(
             self.session
         )
+        self.task_runtime = TaskRuntimeRepository(self.session)
         self.artifact_graph = SemanticArtifactGraphRepository(
             self.session
         )

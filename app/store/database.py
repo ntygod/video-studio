@@ -36,6 +36,7 @@ class Database:
         from . import operation_models  # noqa: F401
         from . import regeneration_models  # noqa: F401
         from . import regeneration_replan_models  # noqa: F401
+        from . import task_runtime_models  # noqa: F401
         from .migrations import upgrade_database
 
         upgrade_database(self.engine)

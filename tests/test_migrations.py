@@ -7,6 +7,7 @@ from app.store import models  # noqa: F401
 from app.store import operation_models  # noqa: F401
 from app.store import regeneration_models  # noqa: F401
 from app.store import regeneration_replan_models  # noqa: F401
+from app.store import task_runtime_models  # noqa: F401
 from app.store.database import Base, Database
 from app.store.migrations import BASELINE_REVISION, HEAD_REVISION
 
@@ -27,18 +28,31 @@ def test_fresh_database_runs_all_migrations(tmp_path):
     try:
         database.create_schema()
         assert _revision(database) == HEAD_REVISION
-        tables = set(inspect(database.engine).get_table_names())
+        inspector = inspect(database.engine)
+        tables = set(inspector.get_table_names())
         assert {
-            "projects", "creative_units", "artifacts",
-            "artifact_versions", "jobs", "operation_logs",
-            "artifact_dependencies", "asset_dependencies",
-            "artifact_provenance", "artifact_freshness",
-            "regeneration_plans", "regeneration_plan_steps",
-            "regeneration_plan_replans", "alembic_version",
+            "projects",
+            "creative_units",
+            "artifacts",
+            "artifact_versions",
+            "jobs",
+            "operation_logs",
+            "artifact_dependencies",
+            "asset_dependencies",
+            "artifact_provenance",
+            "artifact_freshness",
+            "regeneration_plans",
+            "regeneration_plan_steps",
+            "regeneration_plan_replans",
+            "runtime_plans",
+            "runtime_tasks",
+            "runtime_task_attempts",
+            "runtime_task_events",
+            "alembic_version",
         } <= tables
         operation_columns = {
             item["name"]
-            for item in inspect(database.engine).get_columns(
+            for item in inspector.get_columns(
                 "operation_logs"
             )
         }
@@ -48,7 +62,7 @@ def test_fresh_database_runs_all_migrations(tmp_path):
         } <= operation_columns
         asset_dependency_columns = {
             item["name"]
-            for item in inspect(database.engine).get_columns(
+            for item in inspector.get_columns(
                 "asset_dependencies"
             )
         }
@@ -59,7 +73,7 @@ def test_fresh_database_runs_all_migrations(tmp_path):
         } <= asset_dependency_columns
         plan_columns = {
             item["name"]
-            for item in inspect(database.engine).get_columns(
+            for item in inspector.get_columns(
                 "regeneration_plans"
             )
         }
@@ -72,7 +86,7 @@ def test_fresh_database_runs_all_migrations(tmp_path):
         } <= plan_columns
         step_columns = {
             item["name"]
-            for item in inspect(database.engine).get_columns(
+            for item in inspector.get_columns(
                 "regeneration_plan_steps"
             )
         }
@@ -91,7 +105,7 @@ def test_fresh_database_runs_all_migrations(tmp_path):
         } <= step_columns
         replan_columns = {
             item["name"]
-            for item in inspect(database.engine).get_columns(
+            for item in inspector.get_columns(
                 "regeneration_plan_replans"
             )
         }
@@ -103,16 +117,77 @@ def test_fresh_database_runs_all_migrations(tmp_path):
             "target_snapshot_sha256",
             "reason",
         } <= replan_columns
+        runtime_plan_columns = {
+            item["name"]
+            for item in inspector.get_columns(
+                "runtime_plans"
+            )
+        }
+        assert {
+            "kind",
+            "subject_type",
+            "subject_id",
+            "idempotency_key",
+            "status",
+            "event_seq",
+            "policy_json",
+            "budget_json",
+            "usage_json",
+        } <= runtime_plan_columns
+        runtime_task_columns = {
+            item["name"]
+            for item in inspector.get_columns(
+                "runtime_tasks"
+            )
+        }
+        assert {
+            "task_key",
+            "task_type",
+            "depends_on_task_ids_json",
+            "attempt_count",
+            "max_attempts",
+            "timeout_seconds",
+            "available_at",
+            "checkpoint_json",
+            "claim_token",
+            "claim_owner",
+            "claim_until",
+            "claim_attempt",
+        } <= runtime_task_columns
+        runtime_attempt_columns = {
+            item["name"]
+            for item in inspector.get_columns(
+                "runtime_task_attempts"
+            )
+        }
+        assert {
+            "task_id",
+            "attempt",
+            "status",
+            "worker_id",
+            "claim_token",
+            "checkpoint_json",
+            "heartbeat_at",
+            "lease_until",
+            "retryable",
+        } <= runtime_attempt_columns
         step_indexes = {
             item["name"]
-            for item in inspect(database.engine).get_indexes(
+            for item in inspector.get_indexes(
                 "regeneration_plan_steps"
             )
         }
         assert "ix_regeneration_steps_claimable" in step_indexes
+        runtime_task_indexes = {
+            item["name"]
+            for item in inspector.get_indexes(
+                "runtime_tasks"
+            )
+        }
+        assert "ix_runtime_tasks_claimable" in runtime_task_indexes
         replan_unique = {
             item["name"]
-            for item in inspect(database.engine).get_unique_constraints(
+            for item in inspector.get_unique_constraints(
                 "regeneration_plan_replans"
             )
         }
@@ -120,6 +195,13 @@ def test_fresh_database_runs_all_migrations(tmp_path):
             "uq_regeneration_replan_source",
             "uq_regeneration_replan_target",
         } <= replan_unique
+        runtime_unique = {
+            item["name"]
+            for item in inspector.get_unique_constraints(
+                "runtime_tasks"
+            )
+        }
+        assert "uq_runtime_task_plan_key" in runtime_unique
     finally:
         database.engine.dispose()
 
@@ -131,6 +213,10 @@ def test_pre_alembic_database_is_stamped_then_upgraded(tmp_path):
     Base.metadata.create_all(legacy_engine)
     with legacy_engine.begin() as connection:
         for table in (
+            "runtime_task_events",
+            "runtime_task_attempts",
+            "runtime_tasks",
+            "runtime_plans",
             "regeneration_plan_replans",
             "regeneration_plan_steps",
             "regeneration_plans",
@@ -171,7 +257,8 @@ def test_pre_alembic_database_is_stamped_then_upgraded(tmp_path):
         database.create_schema()
         assert BASELINE_REVISION != HEAD_REVISION
         assert _revision(database) == HEAD_REVISION
-        tables = set(inspect(database.engine).get_table_names())
+        inspector = inspect(database.engine)
+        tables = set(inspector.get_table_names())
         assert {
             "operation_logs",
             "artifact_dependencies",
@@ -181,17 +268,21 @@ def test_pre_alembic_database_is_stamped_then_upgraded(tmp_path):
             "regeneration_plans",
             "regeneration_plan_steps",
             "regeneration_plan_replans",
+            "runtime_plans",
+            "runtime_tasks",
+            "runtime_task_attempts",
+            "runtime_task_events",
         } <= tables
         plan_columns = {
             item["name"]
-            for item in inspect(database.engine).get_columns(
+            for item in inspector.get_columns(
                 "regeneration_plans"
             )
         }
         assert "execution_attempt" in plan_columns
         step_columns = {
             item["name"]
-            for item in inspect(database.engine).get_columns(
+            for item in inspector.get_columns(
                 "regeneration_plan_steps"
             )
         }
@@ -203,6 +294,18 @@ def test_pre_alembic_database_is_stamped_then_upgraded(tmp_path):
             "execution_attempt",
             "attempt_history_json",
         } <= step_columns
+        runtime_task_columns = {
+            item["name"]
+            for item in inspector.get_columns(
+                "runtime_tasks"
+            )
+        }
+        assert {
+            "attempt_count",
+            "max_attempts",
+            "claim_token",
+            "checkpoint_json",
+        } <= runtime_task_columns
         with database.engine.connect() as connection:
             title = connection.execute(
                 text(
