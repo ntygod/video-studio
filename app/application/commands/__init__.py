@@ -11,7 +11,7 @@ from .jobs import CreateJobCommand
 from .projects import CreateProjectCommand, CreateUnitsCommand, PatchProjectCommand, PatchUnitCommand
 from .proposals import AcceptProposalCommand, CreateArtifactChangeProposalCommand, CreateStructureProposalCommand, RejectProposalCommand
 from .recovery import recover_interrupted_operations
-from .regeneration_plans import CancelRegenerationPlanCommand, CreateRegenerationPlanCommand, SetRegenerationPlanStepInputCommand, StartRegenerationPlanCommand
+from .regeneration_plans import CancelRegenerationPlanCommand, CreateRegenerationPlanCommand, RetryRegenerationPlanCommand, SetRegenerationPlanStepInputCommand, StartRegenerationPlanCommand
 from .timeline import CompileTimelineCommand
 from .timeline_recompile import RecompileTimelineArtifactCommand
 from .timeline_repair import RepairTimelineAssetsCommand
@@ -28,7 +28,7 @@ __all__ = [
     "PersistGeneratedArtifactCommand", "PersistGeneratedAssetCommand",
     "PersistGeneratedFileAssetCommand", "RecompileTimelineArtifactCommand",
     "RegisterArtifactDerivationCommand", "RejectProposalCommand",
-    "RepairTimelineAssetsCommand", "RevertOperationCommand",
+    "RepairTimelineAssetsCommand", "RetryRegenerationPlanCommand", "RevertOperationCommand",
     "SetArtifactVersionStatusCommand", "SetRegenerationPlanStepInputCommand",
     "StartRegenerationPlanCommand", "generated_artifact_attempt", "get_command_bus",
     "job_asset_persistence_attempt", "recover_interrupted_operations",

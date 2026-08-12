@@ -13,6 +13,7 @@ from app.application.commands import (
     CreateJobCommand,
     CreateRegenerationPlanCommand,
     RegisterArtifactDerivationCommand,
+    RetryRegenerationPlanCommand,
     SetRegenerationPlanStepInputCommand,
     StartRegenerationPlanCommand,
     get_command_bus,
@@ -68,12 +69,17 @@ class RegenerationPreviewRequest(BaseModel):
 
 
 class RegenerationPlanCreateRequest(RegenerationPreviewRequest):
-    # A browser creates one token per user intent and reuses it for retries.
-    # Omitting it retains the older snapshot-scoped API idempotency behavior.
     client_token: str | None = Field(
         default=None,
         min_length=1,
         max_length=128,
+    )
+
+
+class RegenerationPlanRetryRequest(BaseModel):
+    expected_execution_attempt: int = Field(
+        ge=0,
+        le=20,
     )
 
 
@@ -229,6 +235,37 @@ def start_regeneration_plan(plan_id: str, request: Request):
             f"{plan['snapshot_sha256']}",
         ),
     )
+    return advance_regeneration_plan(
+        request.app.state.database,
+        plan_id,
+        get_job_engine(request.app),
+    )
+
+
+@router.post(
+    "/api/artifact-regeneration/plans/{plan_id}/retry"
+)
+def retry_regeneration_plan(
+    plan_id: str,
+    data: RegenerationPlanRetryRequest,
+    request: Request,
+):
+    execution = get_command_bus(request.app).execute(
+        RetryRegenerationPlanCommand(
+            plan_id=plan_id,
+            expected_execution_attempt=(
+                data.expected_execution_attempt
+            ),
+        ),
+        _context_with_default_key(
+            request,
+            f"regeneration-plan-retry:{plan_id}:"
+            f"{data.expected_execution_attempt}",
+        ),
+    )
+    plan = execution.result
+    if plan["status"] != "running":
+        return plan
     return advance_regeneration_plan(
         request.app.state.database,
         plan_id,

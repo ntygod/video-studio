@@ -35,10 +35,12 @@ class _StepDispatchDeferred(RuntimeError):
 
 
 def _step_operation_key(step: dict[str, Any]) -> str:
-    return (
+    base = (
         f"regeneration-plan:{step['plan_id']}:"
         f"step:{step['id']}"
     )
+    attempt = int(step.get("execution_attempt") or 0)
+    return base if attempt == 0 else f"{base}:attempt:{attempt}"
 
 
 def _operation_status(database, key: str) -> str | None:
@@ -177,6 +179,18 @@ def _reconcile_job_steps(database, plan_id: str) -> None:
                     expected_statuses={"queued", "running"},
                 )
                 continue
+            payload = job.get("payload") or {}
+            job_attempt = int(
+                payload.get("_regeneration_plan_step_attempt") or 0
+            )
+            if job_attempt != int(step.get("execution_attempt") or 0):
+                uow.regeneration_plans.set_step_status(
+                    step["id"],
+                    "failed",
+                    error="regeneration Job belongs to another Step attempt",
+                    expected_statuses={"queued", "running"},
+                )
+                continue
             if job["status"] == "succeeded":
                 result = job.get("result") or {}
                 if (
@@ -280,6 +294,9 @@ def _schedule_llm_step(
             **specification["payload"],
             "_regeneration_plan_id": plan["id"],
             "_regeneration_plan_step_id": current["id"],
+            "_regeneration_plan_step_attempt": current[
+                "execution_attempt"
+            ],
         }
         project_id = plan["project_id"]
         unit_id = specification["unit_id"]

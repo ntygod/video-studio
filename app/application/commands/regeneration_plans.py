@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -15,6 +16,7 @@ from app.application.regeneration_preview_service import (
 )
 from app.store import UnitOfWork
 from app.store.regeneration_repository import (
+    MAX_REGENERATION_RETRIES,
     NONTERMINAL_PLAN_STATUSES,
     NONTERMINAL_STEP_STATUSES,
     TERMINAL_PLAN_STATUSES,
@@ -33,6 +35,99 @@ def _mapping_fingerprint(value: dict[str, str]) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def _require_artifact_snapshot(
+    uow: UnitOfWork,
+    plan: dict[str, Any],
+    step: dict[str, Any],
+    expected_version_id: str,
+) -> None:
+    try:
+        artifact = uow.artifacts.get(step["artifact_id"])
+    except NotFoundError as exc:
+        raise ConflictError(
+            "planned Artifact no longer exists: " + step["artifact_id"]
+        ) from exc
+    if artifact["project_id"] != plan["project_id"]:
+        raise ConflictError(
+            "planned Artifact belongs to another project"
+        )
+    if artifact.get("current_version_id") != expected_version_id:
+        raise ConflictError(
+            "planned target version changed: " + step["artifact_id"]
+        )
+
+
+def _validate_retry_plan(
+    uow: UnitOfWork,
+    plan: dict[str, Any],
+    expected_execution_attempt: int,
+) -> None:
+    if plan["status"] != "failed":
+        raise ConflictError(
+            f"only a failed regeneration plan can retry: {plan['status']}"
+        )
+    if plan["execution_attempt"] != expected_execution_attempt:
+        raise ConflictError(
+            "regeneration plan execution attempt changed"
+        )
+    if expected_execution_attempt >= MAX_REGENERATION_RETRIES:
+        raise ConflictError(
+            "regeneration plan retry limit has been reached"
+        )
+    if not any(step["status"] == "failed" for step in plan["steps"]):
+        raise ConflictError(
+            "failed regeneration plan has no failed Steps"
+        )
+
+    now = time.time()
+    for step in plan["steps"]:
+        status = str(step["status"])
+        if status in {"queued", "running"}:
+            raise ConflictError(
+                "regeneration plan still has active child Jobs"
+            )
+        if status == "canceled":
+            raise ConflictError(
+                "a plan containing canceled Steps must be replanned"
+            )
+        if step.get("claimed") and (
+            step.get("claim_until") is None
+            or float(step["claim_until"]) > now
+        ):
+            raise ConflictError(
+                "regeneration plan still has a live Step claim"
+            )
+
+        expected = step.get("expected_version_id")
+        if status == "succeeded":
+            result_version = str(
+                (step.get("result") or {}).get("version_id") or ""
+            )
+            if not result_version:
+                raise ConflictError(
+                    "a succeeded Step has no result version: "
+                    + step["id"]
+                )
+            _require_artifact_snapshot(
+                uow,
+                plan,
+                step,
+                result_version,
+            )
+        elif expected:
+            _require_artifact_snapshot(
+                uow,
+                plan,
+                step,
+                str(expected),
+            )
+        elif status == "failed":
+            raise ConflictError(
+                "a failed Step has no expected target version: "
+                + step["id"]
+            )
 
 
 @dataclass(slots=True)
@@ -179,22 +274,12 @@ class StartRegenerationPlanCommand:
             expected = step.get("expected_version_id")
             if not expected:
                 continue
-            try:
-                artifact = uow.artifacts.get(step["artifact_id"])
-            except NotFoundError as exc:
-                raise ConflictError(
-                    "planned Artifact no longer exists: "
-                    + step["artifact_id"]
-                ) from exc
-            if artifact["project_id"] != plan["project_id"]:
-                raise ConflictError(
-                    "planned Artifact moved to another project"
-                )
-            if artifact.get("current_version_id") != expected:
-                raise ConflictError(
-                    "planned target version changed: "
-                    + step["artifact_id"]
-                )
+            _require_artifact_snapshot(
+                uow,
+                plan,
+                step,
+                str(expected),
+            )
         started = uow.regeneration_plans.set_plan_status(
             self.plan_id,
             "running",
@@ -210,6 +295,97 @@ class StartRegenerationPlanCommand:
             affected_entities=[
                 {"type": "regeneration_plan", "id": self.plan_id}
             ],
+            inverse_operation=None,
+        )
+
+    def replay(
+        self,
+        uow: UnitOfWork,
+        audit_result: Any,
+    ) -> dict[str, Any]:
+        return uow.regeneration_plans.get(
+            str((audit_result or {})["plan_id"])
+        )
+
+
+@dataclass(slots=True)
+class RetryRegenerationPlanCommand:
+    plan_id: str
+    expected_execution_attempt: int
+    project_id: str | None = None
+
+    operation_type = "regeneration.plan.retry"
+    risk_level = "high"
+    target_type = "regeneration_plan"
+
+    @property
+    def target_id(self) -> str:
+        return self.plan_id
+
+    @property
+    def idempotency_scope(self) -> str:
+        return f"regeneration-plan:{self.plan_id}:retry"
+
+    def arguments(self) -> dict[str, Any]:
+        return {
+            "plan_id": self.plan_id,
+            "expected_execution_attempt": (
+                self.expected_execution_attempt
+            ),
+        }
+
+    def preconditions(self) -> list[dict[str, Any]]:
+        return [
+            {"type": "regeneration_plan_status_is", "status": "failed"},
+            {
+                "type": "regeneration_plan_execution_attempt_is",
+                "attempt": self.expected_execution_attempt,
+            },
+            {"type": "failed_step_targets_are_current"},
+            {"type": "regeneration_plan_has_no_active_work"},
+        ]
+
+    def prepare(self, uow: UnitOfWork) -> None:
+        plan = uow.regeneration_plans.get(self.plan_id)
+        self.project_id = plan["project_id"]
+        _validate_retry_plan(
+            uow,
+            plan,
+            self.expected_execution_attempt,
+        )
+
+    def execute(self, uow: UnitOfWork) -> OperationExecution:
+        plan = uow.regeneration_plans.get(self.plan_id)
+        _validate_retry_plan(
+            uow,
+            plan,
+            self.expected_execution_attempt,
+        )
+        retried = uow.regeneration_plans.retry_failed_plan(
+            self.plan_id,
+            expected_execution_attempt=(
+                self.expected_execution_attempt
+            ),
+        )
+        affected = [
+            {"type": "regeneration_plan", "id": self.plan_id},
+            *[
+                {
+                    "type": "regeneration_plan_step",
+                    "id": step["id"],
+                }
+                for step in retried["steps"]
+                if step["execution_attempt"] > 0
+                and step["attempt_history"]
+            ],
+        ]
+        return OperationExecution(
+            result=retried,
+            audit_result={
+                "plan_id": self.plan_id,
+                "execution_attempt": retried["execution_attempt"],
+            },
+            affected_entities=affected,
             inverse_operation=None,
         )
 
@@ -421,6 +597,7 @@ class CancelRegenerationPlanCommand:
 __all__ = [
     "CancelRegenerationPlanCommand",
     "CreateRegenerationPlanCommand",
+    "RetryRegenerationPlanCommand",
     "SetRegenerationPlanStepInputCommand",
     "StartRegenerationPlanCommand",
 ]
