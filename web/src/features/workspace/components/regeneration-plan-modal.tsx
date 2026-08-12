@@ -23,6 +23,10 @@ import {
     regenerationPlanRetryBlocker,
     regenerationStepMeta,
 } from "@/features/workspace/lib/regeneration-plan";
+import {
+    isRegenerationReplanSourceStatus,
+    regenerationPlanReplanBlocker,
+} from "@/features/workspace/lib/regeneration-replan";
 import type {
     AssetDependencyInput,
     ProjectArtifactFreshnessItem,
@@ -36,6 +40,8 @@ import {
     useCreateRegenerationPlan,
     usePreviewRegenerationCascade,
     useRegenerationPlan,
+    useRegenerationPlanLineage,
+    useReplanRegenerationPlan,
     useRetryRegenerationPlan,
     useSetRegenerationPlanStepInput,
     useStartRegenerationPlan,
@@ -326,11 +332,7 @@ function AttemptHistoryDisclosure({
                         key={`${attempt.attempt}:${attempt.recorded_at}`}
                         className="rounded-[var(--r-sm)] bg-[var(--s-panel)] px-3 py-2"
                     >
-                        <Text
-                            as="p"
-                            variant="caption"
-                            tone="faint"
-                        >
+                        <Text as="p" variant="caption" tone="faint">
                             第 {attempt.attempt + 1} 次尝试
                             {attempt.job_id
                                 ? ` · Job ${attempt.job_id.slice(0, 12)}`
@@ -469,8 +471,10 @@ export function RegenerationPlanModal({
     const preview = usePreviewRegenerationCascade(projectId);
     const createPlan = useCreateRegenerationPlan(projectId);
     const planQuery = useRegenerationPlan(planId);
+    const lineageQuery = useRegenerationPlanLineage(planId);
     const startPlan = useStartRegenerationPlan(projectId);
     const retryPlan = useRetryRegenerationPlan(projectId);
+    const replanPlan = useReplanRegenerationPlan(projectId);
     const cancelPlan = useCancelRegenerationPlan(projectId);
 
     const previewCascade = preview.mutateAsync;
@@ -500,12 +504,23 @@ export function RegenerationPlanModal({
         resetCreate,
     ]);
 
-    const plan = planQuery.data || createPlan.data || null;
+    const createdPlan = createPlan.data;
+    const plan =
+        planQuery.data ||
+        (createdPlan?.id === planId ? createdPlan : null);
     const terminal = plan
         ? isRegenerationPlanTerminal(plan.status)
         : false;
     const unresolvedInput = regenerationPlanHasUnresolvedInput(plan);
     const retryBlocker = regenerationPlanRetryBlocker(plan);
+    const lineage = lineageQuery.data || null;
+    const replanBlocker = lineageQuery.isLoading
+        ? "正在读取重新规划关系"
+        : lineageQuery.isError
+          ? "重新规划关系读取失败"
+          : regenerationPlanReplanBlocker(plan, lineage);
+    const replanChildId = lineage?.replanned_by?.target_plan_id || null;
+    const replanParentId = lineage?.replanned_from?.source_plan_id || null;
     const planMeta = plan ? regenerationPlanMeta(plan.status) : null;
 
     const create = async () => {
@@ -557,6 +572,32 @@ export function RegenerationPlanModal({
         } catch (error) {
             message.error(
                 error instanceof Error ? error.message : "计划重试失败",
+            );
+        }
+    };
+
+    const replan = async () => {
+        if (
+            !plan ||
+            !isRegenerationReplanSourceStatus(plan.status) ||
+            replanBlocker
+        ) {
+            return;
+        }
+        try {
+            const target = await replanPlan.mutateAsync({
+                planId: plan.id,
+                input: {
+                    expected_source_status: plan.status,
+                    expected_execution_attempt: plan.execution_attempt,
+                    reason: "用户从工作台按当前依赖图重新规划",
+                },
+            });
+            setPlanId(target.id);
+            message.success("已按当前依赖图创建新计划，旧计划已终止");
+        } catch (error) {
+            message.error(
+                error instanceof Error ? error.message : "重新规划失败",
             );
         }
     };
@@ -647,6 +688,40 @@ export function RegenerationPlanModal({
             </Tooltip>,
         );
     }
+    if (replanChildId) {
+        footer.push(
+            <Button
+                key="open-replan"
+                variant="secondary"
+                icon={<GitBranch className="size-3.5" />}
+                onClick={() => setPlanId(replanChildId)}
+            >
+                打开后续计划
+            </Button>,
+        );
+    } else if (
+        plan &&
+        isRegenerationReplanSourceStatus(plan.status)
+    ) {
+        footer.push(
+            <Tooltip
+                key="replan-tip"
+                title={replanBlocker || undefined}
+            >
+                <span>
+                    <Button
+                        variant="secondary"
+                        icon={<GitBranch className="size-3.5" />}
+                        disabled={Boolean(replanBlocker)}
+                        loading={replanPlan.isPending}
+                        onClick={() => void replan()}
+                    >
+                        按当前图重新规划
+                    </Button>
+                </span>
+            </Tooltip>,
+        );
+    }
 
     return (
         <Modal
@@ -727,6 +802,32 @@ export function RegenerationPlanModal({
                 </div>
             ) : plan ? (
                 <div>
+                    {replanParentId || replanChildId ? (
+                        <Surface
+                            level="raised"
+                            radius="sm"
+                            hairline
+                            inset="3"
+                            className="mb-4"
+                        >
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                <Text variant="caption" tone="muted">
+                                    {replanParentId
+                                        ? `由计划 ${replanParentId.slice(0, 8)} 按当前图重新规划`
+                                        : `已生成后续计划 ${replanChildId?.slice(0, 8)}`}
+                                </Text>
+                                {replanParentId ? (
+                                    <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        onClick={() => setPlanId(replanParentId)}
+                                    >
+                                        查看来源计划
+                                    </Button>
+                                ) : null}
+                            </div>
+                        </Surface>
+                    ) : null}
                     <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                         <div className="flex items-center gap-2">
                             {planMeta ? (
@@ -743,7 +844,7 @@ export function RegenerationPlanModal({
                             </Text>
                         ) : plan.status === "failed" ? (
                             <Text variant="caption" tone="warning">
-                                重试只重置失败步骤，已成功版本会保留
+                                重试保留成功版本；重新规划会读取当前图
                             </Text>
                         ) : null}
                     </div>
