@@ -22,6 +22,9 @@ from app.store import UnitOfWork
 from app.store.regeneration_replan_models import (
     RegenerationPlanReplanRow,
 )
+from app.store.regeneration_repository import (
+    NONTERMINAL_STEP_STATUSES,
+)
 from app.store.repositories import ConflictError, new_id
 
 from .base import OperationExecution
@@ -113,6 +116,36 @@ class ReplanRegenerationPlanCommand:
                 "regeneration graph changed before replan was committed"
             )
 
+        # Replan supersedes the old execution intent. Retire it in the same
+        # transaction before creating the replacement so Start/Retry racing in
+        # another process cannot leave two executable Plans for the same roots.
+        source_status = str(source["status"])
+        retired_step_ids: list[str] = []
+        if source_status != "canceled":
+            retired = uow.regeneration_plans.set_plan_status(
+                self.source_plan_id,
+                "canceled",
+                expected_statuses={source_status},
+            )
+            if retired["status"] != "canceled":
+                raise ConflictError(
+                    "source regeneration Plan changed while being replanned"
+                )
+            for step in source.get("steps") or []:
+                if step["status"] not in NONTERMINAL_STEP_STATUSES:
+                    continue
+                saved = uow.regeneration_plans.set_step_status(
+                    step["id"],
+                    "canceled",
+                    error="regeneration Plan was superseded by replan",
+                    expected_statuses={step["status"]},
+                )
+                if saved["status"] != "canceled":
+                    raise ConflictError(
+                        "source regeneration Step changed during replan"
+                    )
+                retired_step_ids.append(step["id"])
+
         target = uow.regeneration_plans.create_from_preview(
             preview,
             actual_snapshot,
@@ -122,7 +155,7 @@ class ReplanRegenerationPlanCommand:
             project_id=source["project_id"],
             source_plan_id=self.source_plan_id,
             target_plan_id=target["id"],
-            source_status=str(source["status"]),
+            source_status=source_status,
             source_execution_attempt=int(
                 source.get("execution_attempt") or 0
             ),
@@ -142,6 +175,7 @@ class ReplanRegenerationPlanCommand:
             result=target,
             audit_result={
                 "source_plan_id": self.source_plan_id,
+                "source_status": source_status,
                 "target_plan_id": target["id"],
                 "relation_id": relation.id,
                 "target_snapshot_sha256": actual_snapshot,
@@ -151,6 +185,13 @@ class ReplanRegenerationPlanCommand:
                     "type": "regeneration_plan",
                     "id": self.source_plan_id,
                 },
+                *[
+                    {
+                        "type": "regeneration_plan_step",
+                        "id": step_id,
+                    }
+                    for step_id in retired_step_ids
+                ],
                 {
                     "type": "regeneration_plan",
                     "id": target["id"],
