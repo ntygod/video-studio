@@ -113,16 +113,37 @@
 
 ## M4 · Durable Task Runtime 与 Agent 2.0
 
-M3 的 RegenerationPlan / Step 是领域级先行验证；M4 将其经验抽象为通用运行时。
+### 已完成
 
-- 通用 Plan / Task / TaskAttempt；
-- Agent 回合进入统一 worker；
-- Planner、Executor、Reviewer、Repair 分层；
-- PolicyDecision、预算、timeout、checkpoint；
-- 所有副作用具有幂等键；
-- 通用 task claim、恢复、retry、replan 和审计契约。
+- [x] Alembic `20260812_0010` 增加通用 RuntimePlan / RuntimeTask / RuntimeTaskAttempt / RuntimeTaskEvent；
+- [x] Task DAG 验证、前驱释放与 blocked 传播；
+- [x] 数据库级 claim、lease、heartbeat、checkpoint 与迟到写入拒绝；
+- [x] Attempt history、retryable failure、backoff 与 max attempts；
+- [x] timeout、Cancel 与 lease-expired crash recovery；
+- [x] Plan 内单调事件序号和 `after_seq` 续读；
+- [x] `TaskRuntime` 内部应用接口；
+- [x] Plan、Task 与 Event 的只读可观察 API；
+- [x] 并发、恢复、重试、超时、取消、DAG、事件和 fresh / legacy 迁移测试。
 
-**验收：** 执行中杀进程后可恢复，同一任务不产生重复实体，高风险动作不绕过确认。
+### 下一步
+
+- [ ] Agent tool-loop 的持久化 checkpoint；
+- [ ] 跨 Attempt 稳定 logical tool call ID 与 Operation 幂等键；
+- [ ] Agent Turn 进入通用 RuntimeTask worker；
+- [ ] RuntimeTaskEvent 驱动 Agent SSE 断线续读；
+- [ ] 通用 Worker / Handler registry；
+- [ ] Planner、Executor、Reviewer、Repair 分层；
+- [ ] PolicyDecision 与高风险动作确认；
+- [ ] 预算、Usage 和 timeout 的执行期强制；
+- [ ] 通用 Replan lineage；
+- [ ] PostgreSQL 多进程竞争与故障注入基线。
+
+详细设计：
+
+- `docs/task-runtime.md`
+- `docs/implementation-log-m4-20260812.md`
+
+**M4 验收状态：** 通用持久化执行内核已经建立，但尚未接管 Agent。完整验收仍要求 Agent 崩溃后从 checkpoint 恢复且不产生重复实体，高风险动作必须经过 Policy 确认。
 
 ## M5 · Evaluator 与 Golden Projects
 
