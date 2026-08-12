@@ -99,110 +99,76 @@
 - [ ] 外部 Provider 强制取消与迟到输出策略；
 - [ ] 500 节点压力、故障注入和生产数据库竞争基线；
 - [ ] 生成 Asset 的 Freshness 节点模型；
-- [ ] 故事结构 → 剧本 → 镜头 → 分镜等更多生产链自动登记；
+- [ ] 更多生产链自动登记；
 - [ ] 项目库卡片显示项目状态与 active Plan 摘要。
 
-详细设计：
+详细设计见 M3 系列文档。
 
-- `docs/m3-freshness-and-regeneration.md`
-- `docs/agent-explicit-production-inputs.md`
-- `docs/regeneration-cascade-preview.md`
-- `docs/regeneration-plan-execution.md`
-- `docs/implementation-log-m3-20260812.md`
-
-**M3 验收状态：** 精确输入、图传播、单点修复、级联预览、多进程执行、崩溃恢复、Retry、Replan 与工作台闭环已经成立。剩余工作是策略、性能、更多领域链和 Asset 生产图增强。
+**M3 验收状态：** 精确输入、图传播、单点修复、级联预览、多进程执行、崩溃恢复、Retry、Replan 与工作台闭环已经成立。
 
 ## M4 · Durable Task Runtime 与 Agent 2.0
 
 ### 已完成
 
-- [x] Alembic `20260812_0010` 增加 RuntimePlan / RuntimeTask / RuntimeTaskAttempt / RuntimeTaskEvent；
-- [x] Task DAG 验证、前驱释放与 blocked 传播；
-- [x] 数据库 claim、lease、heartbeat、checkpoint 与迟到写入拒绝；
-- [x] Attempt history、retryable failure、backoff 与 max attempts；
-- [x] timeout、Cancel 与 lease-expired crash recovery；
-- [x] Plan 内单调事件序号和 `after_seq` 续读；
-- [x] 并发幂等 Plan 创建；
-- [x] 通用 Handler registry、固定 worker、自动 heartbeat / reaper 与 fail-closed；
-- [x] Plan、Task 与 Event 的只读可观察 API；
-- [x] Agent Turn 创建与 RuntimePlan / Task 原子提交；
-- [x] Agent tool-loop 的 model / tools / finalize checkpoint；
-- [x] 冻结 Provider / Model，恢复时显式使用原 model ID；
-- [x] 跨 Attempt 稳定 logical tool call ID 与 Operation 幂等键；
-- [x] Command 已提交、Step / checkpoint 未提交时的 exactly-once 恢复；
-- [x] Agent Turn 进入通用 RuntimeTask worker；
-- [x] 应用 startup 无浏览器参与恢复 queued / interrupted Turn；
-- [x] RuntimeTaskEvent 驱动 Agent SSE 断线续读；
-- [x] 非持久 live token 与 Last-Event-ID 隔离；
-- [x] final assistant message、终态事实与缺失事件修复；
-- [x] Agent Cancel 同时终止 Turn、Plan、Task 与 Attempt；
-- [x] fresh / legacy 迁移、并发、崩溃注入、前后端和生产构建测试。
+- [x] `0010`：RuntimePlan / Task / Attempt / Event；
+- [x] DAG、claim、lease、heartbeat、checkpoint、timeout、retry、Cancel 与 recovery；
+- [x] Plan 事件序号、并发幂等创建和 Handler registry；
+- [x] Agent Turn 与 Plan / Task 原子提交；
+- [x] 冻结 Provider / Model 和 tool-loop checkpoint；
+- [x] logical tool call、AgentStep 与 Command exactly-once；
+- [x] startup 无浏览器恢复；
+- [x] RuntimeTaskEvent SSE 续读、live token 隔离和终态事件修复；
+- [x] `0011`：数据库 admission slot 与语义事件去重；
+- [x] 容量满 429 的 Turn 创建原子回滚；
+- [x] `0012`：持久化 PolicyDecision、用户确认和 Budget Ledger；
+- [x] 高风险动作在副作用前 suspend，批准 / 拒绝后从 checkpoint 恢复；
+- [x] token、tool call 与 wall-clock 执行期硬预算；
+- [x] 项目级审批中心和单 Turn 审批卡；
+- [x] 页面刷新后自动恢复 Conversation 的活动 Turn；
+- [x] `0013`：审批期限、历史 pending 回填和周期过期回收；
+- [x] 用户审批与到期 reaper 的数据库 CAS；
+- [x] fresh / legacy 迁移、并发、故障窗口、前后端和生产构建测试。
 
 ### 下一步
 
 - [ ] Planner、Executor、Reviewer、Repair 分层；
-- [ ] PolicyDecision 与高风险动作确认 Task；
-- [ ] token、成本、步骤数与媒体预算的执行期硬限制；
+- [ ] Provider 价格表与真实 cost 计量；
+- [ ] 角色权限、多人审批与双人复核；
 - [ ] 通用 RuntimePlan Replan lineage；
 - [ ] 通用 Task compensation；
 - [ ] token 级持久化流输出；
 - [ ] PostgreSQL 多进程、网络分区和大规模故障注入基线；
-- [ ] 在通用 Runtime 稳定后评估 RegenerationPlan 适配，避免双写。
+- [ ] 稳定后评估 RegenerationPlan 适配，避免双写。
 
 详细设计：
 
 - `docs/task-runtime.md`
+- `docs/runtime-governance.md`
 - `docs/implementation-log-m4-20260812.md`
 
-**M4 验收状态：** 通用持久化执行内核和 Agent Turn 首个生产闭环已经成立。Agent 在工具副作用、进程重启、断线续读、取消和终态提交窗口内具备可验证恢复；完整 Agent 2.0 仍需 Planner/Reviewer、PolicyDecision 与预算治理。
+**M4 验收状态：** 通用执行内核、Agent exactly-once、准入、持久事件、审批发现与期限回收、PolicyDecision 和硬预算首个生产闭环已经成立。完整 Agent 2.0 仍需角色分层、真实成本和质量评估。
 
 ## M5 · Evaluator 与 Golden Projects
 
-固定三个 Golden Project：
-
-1. 30 秒广告；
-2. 90 秒剧情短片；
-3. 3 分钟科普视频。
-
-测试层次：
-
-- 确定性 schema / 状态机测试；
-- 故障注入；
-- Golden Project 场景回归；
-- Agent Eval；
-- 真实 Provider 合同测试。
-
-**验收：** 端到端成功率、错误写入率、重复产物率和恢复率有可重复基线。
+固定三个 Golden Project：30 秒广告、90 秒剧情短片和 3 分钟科普视频。测试包括 schema / 状态机、故障注入、场景回归、Agent Eval 与真实 Provider 合同。
 
 ## M6 · 媒体与渲染生产化
 
 - Provider 异步 submit / poll / cancel / download；
 - 外部任务恢复与幂等下载；
-- 原始 Asset 不可变，缩略图和转码文件作为派生资产；
-- Timeline 编译为 RenderGraph；
-- 保存可复现 Render Manifest；
+- 原始 Asset 不可变，派生缩略图与转码；
+- Timeline → RenderGraph；
+- 可复现 Render Manifest；
 - 安全下载、MIME、大小与 URL 校验。
 
 ## M7 · 工作台纵向重构
-
-围绕首个 Golden Path 重构：
 
 ```text
 简报 → 故事 → 剧本 → 镜头 → 分镜 → 素材 → 时间线 → 预览 → 审阅
 ```
 
-每一步显示输入、输出、质量、依赖、过期状态、成本和下一步。
+每一步显示输入、输出、质量、依赖、过期、成本和下一步。
 
 ## 变更纪律
 
-每个里程碑必须同时包含：
-
-- 设计文档或 ADR；
-- 数据迁移；
-- 正常路径测试；
-- 失败和恢复测试；
-- 可观察事件；
-- 回滚说明；
-- 实施日志。
-
-禁止以“接口已存在”或“页面已显示”作为完成标准。完成标准只能是可验证的用户任务与系统不变量。
+每个里程碑必须包含设计文档、迁移、正常路径、失败恢复、可观察事件、回滚说明和实施日志。完成标准只能是可验证的用户任务与系统不变量。
