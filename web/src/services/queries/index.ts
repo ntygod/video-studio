@@ -15,3 +15,4 @@ export * from "./use-providers";
 export * from "./use-search";
 export * from "./use-generation";
 export * from "./use-freshness";
+export * from "./use-regeneration-replans";

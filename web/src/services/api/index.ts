@@ -15,4 +15,5 @@ export * from "./jobs";
 export * from "./providers";
 export * from "./generation";
 export * from "./freshness";
+export * from "./regeneration-replans";
 export * from "./system";

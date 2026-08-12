@@ -32,6 +32,8 @@ export const qk = {
         ["regeneration-plans", projectId] as const,
     regenerationPlan: (planId: string) =>
         ["regeneration-plan", planId] as const,
+    regenerationPlanLineage: (planId: string) =>
+        ["regeneration-plan-lineage", planId] as const,
 
     conversationsRoot: (projectId: string) => ["conversations", projectId] as const,
     conversations: (projectId: string, unitId?: string | null) => ["conversations", projectId, scope(unitId)] as const,
