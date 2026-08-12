@@ -83,7 +83,14 @@ export function useRegenerationPlans(projectId: string) {
         queryKey: qk.regenerationPlansRoot(projectId),
         queryFn: () => listRegenerationPlans(projectId),
         enabled: Boolean(projectId),
-        staleTime: 10_000,
+        staleTime: 5_000,
+        refetchInterval: (query) =>
+            query.state.data?.some((plan) =>
+                ["draft", "running", "blocked"].includes(plan.status),
+            )
+                ? 5_000
+                : false,
+        refetchOnWindowFocus: true,
     });
 }
 
