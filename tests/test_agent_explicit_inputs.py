@@ -1,5 +1,16 @@
-from app.application.agent import ToolContext, execute_tool
+import pytest
+
+from app.application.agent.tools import TOOL_BY_NAME, ToolContext
 from app.store import UnitOfWork
+from app.store.repositories import NotFoundError
+
+
+class RecordingJobEngine:
+    def __init__(self):
+        self.submitted: list[str] = []
+
+    def submit(self, job_id: str) -> None:
+        self.submitted.append(job_id)
 
 
 def _artifact(client, project_id: str, name: str):
@@ -29,171 +40,240 @@ def _asset(client, project_id: str, name: str):
     return response.json()
 
 
-def _conversation(client, project_id: str):
-    response = client.post(
-        f"/api/projects/{project_id}/conversations",
-        json={"title": "精确输入测试"},
-    )
-    assert response.status_code == 201, response.text
-    return response.json()
+def _create_turn_and_step(
+    app,
+    project_id: str,
+    tool_name: str,
+    refs: list[dict],
+):
+    with UnitOfWork(app.state.database) as uow:
+        conversation = uow.conversations.create(
+            project_id,
+            None,
+            "Agent explicit input test",
+        )
+        turn = uow.agent_turns.create(
+            conversation["id"],
+            project_id,
+            context_refs=refs,
+        )
+        step = uow.agent_turns.add_step(
+            turn["id"],
+            "tool",
+            tool_name=tool_name,
+            arguments={},
+            request_id="explicit-input-test",
+        )
+    return turn, step
 
 
-def _turn(client, conversation_id: str, refs: list[dict]):
-    response = client.post(
-        f"/api/conversations/{conversation_id}/turns",
+def _invoke(
+    app,
+    project_id: str,
+    turn_id: str,
+    tool_name: str,
+    args: dict,
+    *,
+    engine=None,
+):
+    with UnitOfWork(app.state.database) as uow:
+        context = ToolContext(
+            uow,
+            project_id,
+            None,
+            turn_id,
+            app.state.settings,
+            engine or RecordingJobEngine(),
+        )
+        return TOOL_BY_NAME[tool_name].handler(context, args)
+
+
+def _set_pinned_refs(client, project_id: str, refs: list[dict]):
+    detail = client.get(f"/api/projects/{project_id}").json()
+    response = client.patch(
+        f"/api/projects/{project_id}",
         json={
-            "content": "请基于明确引用生成一张图",
-            "context_refs": refs,
+            "expected_revision": detail["revision"],
+            "patch": {
+                "settings": {
+                    **detail["settings"],
+                    "pinned_refs": refs,
+                }
+            },
         },
     )
-    assert response.status_code == 201, response.text
-    return response.json()["turn_id"]
+    assert response.status_code == 200, response.text
 
 
-def test_agent_generate_job_resolves_turn_and_pinned_refs(
+def test_agent_media_job_freezes_direct_turn_and_pinned_inputs(
+    app,
     client,
     project,
 ):
+    direct_artifact = _artifact(
+        client,
+        project["id"],
+        "工具直接指定稿件",
+    )
     turn_artifact = _artifact(
         client,
         project["id"],
-        "回合稿件",
+        "回合引用稿件",
     )
     pinned_artifact = _artifact(
         client,
         project["id"],
         "钉住稿件",
     )
-    turn_asset = _asset(client, project["id"], "回合素材")
-    pinned_asset = _asset(client, project["id"], "钉住素材")
-
-    detail = client.get(
-        f"/api/projects/{project['id']}"
-    ).json()
-    patched = client.patch(
-        f"/api/projects/{project['id']}",
-        json={
-            "expected_revision": detail["revision"],
-            "patch": {
-                "settings": {
-                    **detail["settings"],
-                    "pinned_refs": [
-                        {
-                            "type": "artifact",
-                            "id": pinned_artifact["id"],
-                        },
-                        {
-                            "type": "asset",
-                            "id": pinned_asset["id"],
-                        },
-                    ],
-                }
-            },
-        },
-    )
-    assert patched.status_code == 200, patched.text
-
-    conversation = _conversation(client, project["id"])
-    turn_id = _turn(
+    direct_asset = _asset(
         client,
-        conversation["id"],
+        project["id"],
+        "工具直接指定素材",
+    )
+    turn_asset = _asset(client, project["id"], "回合引用素材")
+    pinned_asset = _asset(client, project["id"], "钉住素材")
+    unit = client.post(
+        f"/api/projects/{project['id']}/units",
+        json={"units": [{"title": "只作为上下文的单元"}]},
+    ).json()[0]
+
+    _set_pinned_refs(
+        client,
+        project["id"],
+        [
+            {"type": "artifact", "id": pinned_artifact["id"]},
+            {"type": "asset", "id": pinned_asset["id"]},
+        ],
+    )
+    turn, _step = _create_turn_and_step(
+        app,
+        project["id"],
+        "generate_media",
         [
             {"type": "artifact", "id": turn_artifact["id"]},
             {"type": "asset", "id": turn_asset["id"]},
-            # Unit references are useful prompt context but deliberately do
-            # not expand into hidden graph dependencies.
-            {"type": "unit", "id": "not-expanded"},
+            # Valid Unit context must not expand into every child entity.
+            {"type": "unit", "id": unit["id"]},
         ],
     )
+    engine = RecordingJobEngine()
+    result = _invoke(
+        app,
+        project["id"],
+        turn["id"],
+        "generate_media",
+        {
+            "kind": "image",
+            "prompt": "角色站在雨夜街头",
+            "params": {"width": 1024},
+            "input_artifact_ids": [direct_artifact["id"]],
+            "input_asset_ids": [direct_asset["id"]],
+        },
+        engine=engine,
+    )
 
-    with UnitOfWork(client.app.state.database) as uow:
-        result = execute_tool(
-            "generate_media",
-            {
-                "capability": "image",
-                "prompt": "角色站在雨夜街头",
-                "parameters": {"width": 1024},
-                "name": "精确输入生成",
-            },
-            ToolContext(
-                project_id=project["id"],
-                unit_id=None,
-                uow=uow,
-            ),
-            turn_id=turn_id,
-            step_id="explicit-input-step",
-        )
-    assert result.ok, result.error
-    job_id = result.created_entities[0]["id"]
-
-    with UnitOfWork(client.app.state.database) as uow:
-        job = uow.jobs.get(job_id)
+    assert engine.submitted == [result["job_id"]]
+    with UnitOfWork(app.state.database) as uow:
+        job = uow.jobs.get(result["job_id"])
+    assert "input_artifact_ids" not in job["payload"]
     assert job["payload"]["input_version_ids"] == [
+        direct_artifact["current_version"]["id"],
         turn_artifact["current_version"]["id"],
         pinned_artifact["current_version"]["id"],
     ]
     assert job["payload"]["input_asset_ids"] == [
+        direct_asset["id"],
         turn_asset["id"],
         pinned_asset["id"],
     ]
 
 
-def test_agent_generate_job_replays_same_exact_inputs(
+def test_agent_artifact_write_registers_and_replays_exact_inputs(
+    app,
     client,
     project,
 ):
-    artifact = _artifact(client, project["id"], "幂等稿件")
-    asset = _asset(client, project["id"], "幂等素材")
-    conversation = _conversation(client, project["id"])
-    turn_id = _turn(
-        client,
-        conversation["id"],
+    source = _artifact(client, project["id"], "上游稿件")
+    source_version_id = source["current_version"]["id"]
+    asset = _asset(client, project["id"], "角色参考图")
+    turn, step = _create_turn_and_step(
+        app,
+        project["id"],
+        "write_artifact",
         [
-            {"type": "artifact", "id": artifact["id"]},
+            {"type": "artifact", "id": source["id"]},
             {"type": "asset", "id": asset["id"]},
         ],
     )
     arguments = {
-        "capability": "image",
-        "prompt": "同一个请求",
-        "parameters": {},
+        "kind": "custom_note",
+        "name": "Agent 派生稿",
+        "payload": {"body": "由明确输入生成"},
     }
 
-    with UnitOfWork(client.app.state.database) as uow:
-        first = execute_tool(
-            "generate_media",
-            arguments,
-            ToolContext(project["id"], None, uow),
-            turn_id=turn_id,
-            step_id="same-step",
-        )
-    with UnitOfWork(client.app.state.database) as uow:
-        second = execute_tool(
-            "generate_media",
-            arguments,
-            ToolContext(project["id"], None, uow),
-            turn_id=turn_id,
-            step_id="same-step",
-        )
-    assert first.ok and second.ok
-    assert second.created_entities == first.created_entities
+    first = _invoke(
+        app,
+        project["id"],
+        turn["id"],
+        "write_artifact",
+        arguments,
+    )
+    advanced = client.post(
+        f"/api/artifacts/{source['id']}/versions",
+        json={"payload": {"body": "上游 v2"}},
+    )
+    assert advanced.status_code == 201, advanced.text
+    second = _invoke(
+        app,
+        project["id"],
+        turn["id"],
+        "write_artifact",
+        arguments,
+    )
 
-    job_id = first.created_entities[0]["id"]
-    with UnitOfWork(client.app.state.database) as uow:
+    assert second["artifact_id"] == first["artifact_id"]
+    assert second["operation_id"] == first["operation_id"]
+    with UnitOfWork(app.state.database) as uow:
+        artifact = uow.artifacts.get(first["artifact_id"])
+        derivation = uow.artifact_graph.derivation(
+            artifact["current_version_id"]
+        )
+        operation = uow.operations.get(first["operation_id"])
         matching = [
-            job
-            for job in uow.jobs.list(project["id"])
-            if job["id"] == job_id
+            item
+            for item in uow.artifacts.list(
+                project["id"],
+                include_payload=False,
+            )
+            if item["name"] == "Agent 派生稿"
         ]
-        job = uow.jobs.get(job_id)
+
     assert len(matching) == 1
-    assert job["payload"]["input_version_ids"] == [
-        artifact["current_version"]["id"]
+    assert [
+        edge["upstream_version_id"]
+        for edge in derivation["dependencies"]
+    ] == [source_version_id]
+    assert [
+        edge["upstream_asset_id"]
+        for edge in derivation["asset_dependencies"]
+    ] == [asset["id"]]
+    assert derivation["provenance"]["operation_id"] == (
+        first["operation_id"]
+    )
+    assert derivation["provenance"]["prompt_version"] == (
+        "agent-write-artifact@1"
+    )
+    assert operation["idempotency_key"] == (
+        f"agent:{turn['id']}:{step['id']}"
+    )
+    # The old exact input stays frozen even after the source advanced.
+    assert derivation["provenance"]["input_version_ids"] == [
+        source_version_id
     ]
-    assert job["payload"]["input_asset_ids"] == [asset["id"]]
 
 
-def test_agent_generate_job_rejects_foreign_explicit_ref(
+def test_agent_production_tool_rejects_foreign_context_ref(
+    app,
     client,
     project,
 ):
@@ -202,31 +282,33 @@ def test_agent_generate_job_rejects_foreign_explicit_ref(
         json={"title": "其他项目"},
     ).json()
     foreign = _artifact(client, other["id"], "外部稿件")
-    conversation = _conversation(client, project["id"])
-    turn_id = _turn(
-        client,
-        conversation["id"],
+    turn, _step = _create_turn_and_step(
+        app,
+        project["id"],
+        "generate_media",
         [{"type": "artifact", "id": foreign["id"]}],
     )
+    engine = RecordingJobEngine()
 
-    with UnitOfWork(client.app.state.database) as uow:
-        result = execute_tool(
+    with pytest.raises(NotFoundError, match=foreign["id"]):
+        _invoke(
+            app,
+            project["id"],
+            turn["id"],
             "generate_media",
             {
-                "capability": "image",
+                "kind": "image",
                 "prompt": "不允许跨项目",
-                "parameters": {},
+                "params": {},
             },
-            ToolContext(project["id"], None, uow),
-            turn_id=turn_id,
-            step_id="foreign-ref-step",
+            engine=engine,
         )
-    assert not result.ok
-    assert foreign["id"] in result.error
-    with UnitOfWork(client.app.state.database) as uow:
+
+    assert engine.submitted == []
+    with UnitOfWork(app.state.database) as uow:
         jobs = [
             job
             for job in uow.jobs.list(project["id"])
-            if job.get("turn_id") == turn_id
+            if job.get("turn_id") == turn["id"]
         ]
     assert jobs == []
