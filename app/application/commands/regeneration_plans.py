@@ -15,8 +15,9 @@ from app.application.regeneration_preview_service import (
 )
 from app.store import UnitOfWork
 from app.store.regeneration_repository import (
+    NONTERMINAL_PLAN_STATUSES,
+    NONTERMINAL_STEP_STATUSES,
     TERMINAL_PLAN_STATUSES,
-    TERMINAL_STEP_STATUSES,
 )
 from app.store.repositories import ConflictError, NotFoundError
 
@@ -182,7 +183,8 @@ class StartRegenerationPlanCommand:
                 artifact = uow.artifacts.get(step["artifact_id"])
             except NotFoundError as exc:
                 raise ConflictError(
-                    f"planned Artifact no longer exists: {step['artifact_id']}"
+                    "planned Artifact no longer exists: "
+                    + step["artifact_id"]
                 ) from exc
             if artifact["project_id"] != plan["project_id"]:
                 raise ConflictError(
@@ -193,19 +195,21 @@ class StartRegenerationPlanCommand:
                     "planned target version changed: "
                     + step["artifact_id"]
                 )
-        uow.regeneration_plans.set_plan_status(
+        started = uow.regeneration_plans.set_plan_status(
             self.plan_id,
             "running",
+            expected_statuses=NONTERMINAL_PLAN_STATUSES,
         )
+        if started["status"] != "running":
+            raise ConflictError(
+                f"regeneration plan is already {started['status']}"
+            )
         return OperationExecution(
             result=uow.regeneration_plans.get(self.plan_id),
             audit_result={"plan_id": self.plan_id},
             affected_entities=[
                 {"type": "regeneration_plan", "id": self.plan_id}
             ],
-            # Starting a plan may already release external Jobs or append
-            # versions. Cancellation stops unfinished work but is not a true
-            # inverse, so this Operation must not advertise compensatability.
             inverse_operation=None,
         )
 
@@ -301,6 +305,7 @@ class SetRegenerationPlanStepInputCommand:
             uow.regeneration_plans.set_plan_status(
                 plan["id"],
                 "running",
+                expected_statuses={"blocked"},
             )
         return OperationExecution(
             result=saved,
@@ -361,32 +366,41 @@ class CancelRegenerationPlanCommand:
 
     def execute(self, uow: UnitOfWork) -> OperationExecution:
         plan = uow.regeneration_plans.get(self.plan_id)
+        canceled_plan = uow.regeneration_plans.set_plan_status(
+            self.plan_id,
+            "canceled",
+            expected_statuses=NONTERMINAL_PLAN_STATUSES,
+        )
+        if canceled_plan["status"] != "canceled":
+            raise ConflictError(
+                f"regeneration plan is already {canceled_plan['status']}"
+            )
+
         affected = [
             {"type": "regeneration_plan", "id": self.plan_id}
         ]
         for step in plan["steps"]:
-            if step["status"] in TERMINAL_STEP_STATUSES:
+            if step["status"] not in NONTERMINAL_STEP_STATUSES:
+                continue
+            saved = uow.regeneration_plans.set_step_status(
+                step["id"],
+                "canceled",
+                error="regeneration plan canceled",
+                expected_statuses=NONTERMINAL_STEP_STATUSES,
+            )
+            if saved["status"] != "canceled":
                 continue
             if step.get("job_id"):
                 try:
                     uow.jobs.request_cancel(step["job_id"])
                 except NotFoundError:
                     pass
-            uow.regeneration_plans.set_step_status(
-                step["id"],
-                "canceled",
-                error="regeneration plan canceled",
-            )
             affected.append(
                 {
                     "type": "regeneration_plan_step",
                     "id": step["id"],
                 }
             )
-        uow.regeneration_plans.set_plan_status(
-            self.plan_id,
-            "canceled",
-        )
         return OperationExecution(
             result=uow.regeneration_plans.get(self.plan_id),
             audit_result={"plan_id": self.plan_id},

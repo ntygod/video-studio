@@ -1,12 +1,14 @@
-"""Durable, restart-safe coordinator for regeneration plans."""
+"""Durable, multi-process-safe coordinator for regeneration plans."""
 
 from __future__ import annotations
 
 import hashlib
 import json
-import threading
+import os
+import socket
 from copy import deepcopy
 from typing import Any
+from uuid import uuid4
 
 from app.application.commands.base import (
     CommandBus,
@@ -17,17 +19,55 @@ from app.application.regeneration_service import (
 )
 from app.store import UnitOfWork
 from app.store.regeneration_repository import (
-    TERMINAL_PLAN_STATUSES,
+    CLAIMABLE_STEP_STATUSES,
+    NONTERMINAL_PLAN_STATUSES,
 )
 from app.store.repositories import ConflictError, NotFoundError
 
-_PLAN_LOCKS: dict[str, threading.Lock] = {}
-_PLAN_LOCKS_GUARD = threading.Lock()
+STEP_CLAIM_LEASE_SECONDS = 120.0
+_COORDINATOR_ID = (
+    f"{socket.gethostname()}:{os.getpid()}:{uuid4().hex[:12]}"
+)
 
 
-def _plan_lock(plan_id: str) -> threading.Lock:
-    with _PLAN_LOCKS_GUARD:
-        return _PLAN_LOCKS.setdefault(plan_id, threading.Lock())
+class _StepDispatchDeferred(RuntimeError):
+    """Another live coordinator is still executing the same Operation."""
+
+
+def _step_operation_key(step: dict[str, Any]) -> str:
+    return (
+        f"regeneration-plan:{step['plan_id']}:"
+        f"step:{step['id']}"
+    )
+
+
+def _operation_status(database, key: str) -> str | None:
+    with UnitOfWork(database) as uow:
+        operation = uow.operations.find_by_idempotency_key(key)
+    return str(operation["status"]) if operation else None
+
+
+def _execute_step_command(database, step, command):
+    key = _step_operation_key(step)
+    if _operation_status(database, key) == "running":
+        raise _StepDispatchDeferred(
+            "the same regeneration step Operation is still running"
+        )
+    try:
+        return CommandBus(database).execute(
+            command,
+            CommandContext(
+                actor_type="system",
+                actor_id=step["plan_id"],
+                idempotency_key=key,
+            ),
+        )
+    except ConflictError:
+        if _operation_status(database, key) == "running":
+            raise _StepDispatchDeferred(
+                "the same regeneration step Operation is still running"
+            )
+        raise
 
 
 def regeneration_preview_snapshot_sha256(
@@ -90,6 +130,7 @@ def _runtime_summary(steps: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "failed": counts.get("failed", 0),
         "canceled": counts.get("canceled", 0),
+        "claimed": sum(1 for step in steps if step.get("claimed")),
     }
 
 
@@ -133,6 +174,7 @@ def _reconcile_job_steps(database, plan_id: str) -> None:
                     step["id"],
                     "failed",
                     error="regeneration step Job no longer exists",
+                    expected_statuses={"queued", "running"},
                 )
                 continue
             if job["status"] == "succeeded":
@@ -145,37 +187,44 @@ def _reconcile_job_steps(database, plan_id: str) -> None:
                         step["id"],
                         "failed",
                         error=(
-                            "regeneration Job succeeded without the expected "
-                            "Artifact version result"
+                            "regeneration Job succeeded without the "
+                            "expected Artifact version result"
                         ),
+                        expected_statuses={"queued", "running"},
                     )
                     continue
                 uow.regeneration_plans.set_step_status(
                     step["id"],
                     "succeeded",
                     result=deepcopy(result),
+                    expected_statuses={"queued", "running"},
                 )
             elif job["status"] == "failed":
                 uow.regeneration_plans.set_step_status(
                     step["id"],
                     "failed",
-                    error=job.get("error") or "regeneration Job failed",
+                    error=job.get("error")
+                    or "regeneration Job failed",
+                    expected_statuses={"queued", "running"},
                 )
             elif job["status"] == "canceled":
                 uow.regeneration_plans.set_step_status(
                     step["id"],
                     "canceled",
                     error="regeneration Job was canceled",
+                    expected_statuses={"queued", "running"},
                 )
             elif job["status"] == "running":
                 uow.regeneration_plans.set_step_status(
                     step["id"],
                     "running",
+                    expected_statuses={"queued", "running"},
                 )
             else:
                 uow.regeneration_plans.set_step_status(
                     step["id"],
                     "queued",
+                    expected_statuses={"queued", "running"},
                 )
 
 
@@ -194,14 +243,28 @@ def _assert_step_target_is_current(uow, step: dict[str, Any]) -> None:
         )
 
 
-def _schedule_llm_step(database, step: dict[str, Any], engine=None) -> None:
+def _schedule_llm_step(
+    database,
+    step: dict[str, Any],
+    engine=None,
+) -> tuple[bool, bool]:
     from app.application.commands import CreateJobCommand
 
+    claim_token = str(step["_claim_token"])
     with UnitOfWork(database) as uow:
+        if not uow.regeneration_plans.owns_step_claim(
+            step["id"],
+            claim_token,
+        ):
+            return False, False
         current = uow.regeneration_plans.get_step(step["id"])
         plan = uow.regeneration_plans.get(current["plan_id"])
         if plan["status"] != "running":
-            return
+            uow.regeneration_plans.release_step_claim(
+                current["id"],
+                claim_token,
+            )
+            return False, False
         _assert_step_target_is_current(uow, current)
         specification = prepare_artifact_regeneration(
             uow,
@@ -221,66 +284,78 @@ def _schedule_llm_step(database, step: dict[str, Any], engine=None) -> None:
         project_id = plan["project_id"]
         unit_id = specification["unit_id"]
 
-    execution = CommandBus(database).execute(
+    execution = _execute_step_command(
+        database,
+        step,
         CreateJobCommand(
             project_id=project_id,
             unit_id=unit_id,
             job_type="generate",
             payload=payload,
         ),
-        CommandContext(
-            actor_type="system",
-            actor_id=step["plan_id"],
-            idempotency_key=(
-                f"regeneration-plan:{step['plan_id']}:"
-                f"step:{step['id']}"
-            ),
-        ),
     )
     job = execution.result
     with UnitOfWork(database) as uow:
-        plan = uow.regeneration_plans.get(step["plan_id"])
-        if plan["status"] != "running":
-            uow.jobs.request_cancel(job["id"])
-            uow.regeneration_plans.set_step_status(
-                step["id"],
-                "canceled",
-                job_id=job["id"],
-                error="plan stopped before the Job was linked",
-            )
-            return
-        uow.regeneration_plans.set_step_status(
+        linked = uow.regeneration_plans.complete_step_claim(
             step["id"],
+            claim_token,
             "queued",
             job_id=job["id"],
         )
+        if linked is None:
+            current = uow.regeneration_plans.get_step(step["id"])
+            plan = uow.regeneration_plans.get(current["plan_id"])
+            if (
+                plan["status"] != "running"
+                or current["status"] in {"canceled", "failed"}
+            ):
+                try:
+                    uow.jobs.request_cancel(job["id"])
+                except NotFoundError:
+                    pass
+            return False, False
+
     if engine is not None and job["status"] == "queued":
         engine.submit(job["id"])
 
+    waiting = job["status"] in {"queued", "running"}
+    if not waiting:
+        _reconcile_job_steps(database, step["plan_id"])
+    return True, waiting
 
-def _execute_local_step(database, step: dict[str, Any]) -> None:
+
+def _execute_local_step(
+    database,
+    step: dict[str, Any],
+) -> bool:
     from app.application.commands import (
         RecompileTimelineArtifactCommand,
         RepairTimelineAssetsCommand,
     )
 
-    context = CommandContext(
-        actor_type="system",
-        actor_id=step["plan_id"],
-        idempotency_key=(
-            f"regeneration-plan:{step['plan_id']}:"
-            f"step:{step['id']}"
-        ),
-    )
+    claim_token = str(step["_claim_token"])
+    with UnitOfWork(database) as uow:
+        if not uow.regeneration_plans.owns_step_claim(
+            step["id"],
+            claim_token,
+        ):
+            return False
+        current = uow.regeneration_plans.get_step(step["id"])
+        plan = uow.regeneration_plans.get(current["plan_id"])
+        if plan["status"] != "running":
+            uow.regeneration_plans.release_step_claim(
+                current["id"],
+                claim_token,
+            )
+            return False
+        _assert_step_target_is_current(uow, current)
+
     if step["action"] == "recompile_timeline":
-        execution = CommandBus(database).execute(
-            RecompileTimelineArtifactCommand(
-                artifact_id=step["artifact_id"],
-                expected_current_version_id=str(
-                    step["expected_version_id"] or ""
-                ),
+        command = RecompileTimelineArtifactCommand(
+            artifact_id=step["artifact_id"],
+            expected_current_version_id=str(
+                step["expected_version_id"] or ""
             ),
-            context,
         )
     elif step["action"] == "repair_timeline_assets":
         replacements = dict(
@@ -290,26 +365,27 @@ def _execute_local_step(database, step: dict[str, Any]) -> None:
             raise ConflictError(
                 "Timeline repair step has no Asset replacements"
             )
-        execution = CommandBus(database).execute(
-            RepairTimelineAssetsCommand(
-                artifact_id=step["artifact_id"],
-                replacements=replacements,
-                expected_current_version_id=str(
-                    step["expected_version_id"] or ""
-                ),
+        command = RepairTimelineAssetsCommand(
+            artifact_id=step["artifact_id"],
+            replacements=replacements,
+            expected_current_version_id=str(
+                step["expected_version_id"] or ""
             ),
-            context,
         )
     else:
         raise ConflictError(
-            f"unsupported local regeneration action: {step['action']}"
+            "unsupported local regeneration action: "
+            + step["action"]
         )
+
+    execution = _execute_step_command(database, step, command)
     result = execution.result
     artifact = result.get("artifact") or {}
     version = artifact.get("current_version") or {}
     with UnitOfWork(database) as uow:
-        uow.regeneration_plans.set_step_status(
+        completed = uow.regeneration_plans.complete_step_claim(
             step["id"],
+            claim_token,
             "succeeded",
             result={
                 "artifact_id": artifact.get("id"),
@@ -317,26 +393,55 @@ def _execute_local_step(database, step: dict[str, Any]) -> None:
                 "operation_id": execution.operation["id"],
             },
         )
+    return completed is not None
+
+
+def _release_claim(database, step: dict[str, Any]) -> None:
+    with UnitOfWork(database) as uow:
+        uow.regeneration_plans.release_step_claim(
+            step["id"],
+            str(step["_claim_token"]),
+        )
+
+
+def _fail_claim(
+    database,
+    step: dict[str, Any],
+    error: str,
+) -> bool:
+    with UnitOfWork(database) as uow:
+        failed = uow.regeneration_plans.complete_step_claim(
+            step["id"],
+            str(step["_claim_token"]),
+            "failed",
+            error=error,
+        )
+    return failed is not None
 
 
 def _finish_plan_state(database, plan_id: str) -> dict[str, Any]:
     with UnitOfWork(database) as uow:
         plan = uow.regeneration_plans.get(plan_id)
+        if plan["status"] not in NONTERMINAL_PLAN_STATUSES:
+            return plan
         steps = plan["steps"]
         summary = _runtime_summary(steps)
         uow.regeneration_plans.update_summary(plan_id, summary)
         statuses = {step["status"] for step in steps}
+        expected = NONTERMINAL_PLAN_STATUSES
         if "failed" in statuses:
             uow.regeneration_plans.set_plan_status(
                 plan_id,
                 "failed",
                 error="one or more regeneration steps failed",
+                expected_statuses=expected,
             )
         elif "canceled" in statuses:
             uow.regeneration_plans.set_plan_status(
                 plan_id,
                 "canceled",
                 error="one or more regeneration steps were canceled",
+                expected_statuses=expected,
             )
         elif all(
             step["status"] in {"skipped", "succeeded"}
@@ -345,6 +450,7 @@ def _finish_plan_state(database, plan_id: str) -> dict[str, Any]:
             uow.regeneration_plans.set_plan_status(
                 plan_id,
                 "succeeded",
+                expected_statuses=expected,
             )
         elif any(
             step["status"] in {"queued", "running"}
@@ -353,6 +459,7 @@ def _finish_plan_state(database, plan_id: str) -> dict[str, Any]:
             uow.regeneration_plans.set_plan_status(
                 plan_id,
                 "running",
+                expected_statuses=expected,
             )
         elif any(
             step["status"]
@@ -367,11 +474,13 @@ def _finish_plan_state(database, plan_id: str) -> dict[str, Any]:
             uow.regeneration_plans.set_plan_status(
                 plan_id,
                 "blocked",
+                expected_statuses=expected,
             )
         else:
             uow.regeneration_plans.set_plan_status(
                 plan_id,
                 "running",
+                expected_statuses=expected,
             )
         return uow.regeneration_plans.get(plan_id)
 
@@ -380,102 +489,123 @@ def advance_regeneration_plan(
     database,
     plan_id: str,
     engine=None,
+    *,
+    coordinator_id: str | None = None,
+    claim_lease_seconds: float = STEP_CLAIM_LEASE_SECONDS,
 ) -> dict[str, Any]:
-    """Advance every currently releasable step without waiting for Jobs."""
+    """Advance releasable Steps using database compare-and-set leases."""
 
-    with _plan_lock(plan_id):
-        for _iteration in range(1000):
-            _reconcile_job_steps(database, plan_id)
-            with UnitOfWork(database) as uow:
-                plan = uow.regeneration_plans.get(plan_id)
-            if plan["status"] != "running":
-                return plan
+    owner = coordinator_id or _COORDINATOR_ID
+    for _iteration in range(1000):
+        _reconcile_job_steps(database, plan_id)
+        with UnitOfWork(database) as uow:
+            plan = uow.regeneration_plans.get(plan_id)
+        if plan["status"] != "running":
+            return plan
 
-            steps = plan["steps"]
-            by_artifact = {
-                step["artifact_id"]: step for step in steps
-            }
-            made_local_progress = False
-            scheduled_async = False
+        steps = plan["steps"]
+        by_artifact = {
+            step["artifact_id"]: step for step in steps
+        }
+        made_local_progress = False
+        scheduled_async = False
 
-            for step in steps:
-                if step["status"] not in {
-                    "ready",
-                    "waiting_for_predecessors",
-                }:
-                    continue
-                predecessors = [
-                    by_artifact[artifact_id]
-                    for artifact_id in step["depends_on_artifact_ids"]
-                    if artifact_id in by_artifact
-                ]
-                bad = [
-                    predecessor
-                    for predecessor in predecessors
-                    if predecessor["status"]
-                    in {
-                        "failed",
-                        "canceled",
+        for step in steps:
+            if step["status"] not in CLAIMABLE_STEP_STATUSES:
+                continue
+            predecessors = [
+                by_artifact[artifact_id]
+                for artifact_id in step["depends_on_artifact_ids"]
+                if artifact_id in by_artifact
+            ]
+            bad = [
+                predecessor
+                for predecessor in predecessors
+                if predecessor["status"]
+                in {
+                    "failed",
+                    "canceled",
+                    "blocked",
+                    "requires_input",
+                    "requires_review",
+                    "manual",
+                }
+            ]
+            if bad:
+                blockers = list(step["blockers"])
+                for predecessor in bad:
+                    blockers = _append_blocker(
+                        {**step, "blockers": blockers},
+                        "predecessor_not_succeeded",
+                        (
+                            "A required predecessor cannot complete "
+                            "automatically."
+                        ),
+                        predecessor["artifact_id"],
+                    )
+                with UnitOfWork(database) as uow:
+                    uow.regeneration_plans.set_step_status(
+                        step["id"],
                         "blocked",
-                        "requires_input",
-                        "requires_review",
-                        "manual",
-                    }
-                ]
-                if bad:
-                    blockers = list(step["blockers"])
-                    for predecessor in bad:
-                        blockers = _append_blocker(
-                            {**step, "blockers": blockers},
-                            "predecessor_not_succeeded",
-                            "A required predecessor cannot complete automatically.",
-                            predecessor["artifact_id"],
-                        )
-                    with UnitOfWork(database) as uow:
-                        uow.regeneration_plans.set_step_status(
-                            step["id"],
-                            "blocked",
-                            blockers=blockers,
-                            error="regeneration predecessor is not resolvable",
-                        )
-                    continue
-                if not all(
-                    predecessor["status"] in {"skipped", "succeeded"}
-                    for predecessor in predecessors
-                ):
-                    continue
+                        blockers=blockers,
+                        error=(
+                            "regeneration predecessor is not resolvable"
+                        ),
+                        expected_statuses=CLAIMABLE_STEP_STATUSES,
+                    )
+                made_local_progress = True
+                continue
+            if not all(
+                predecessor["status"] in {"skipped", "succeeded"}
+                for predecessor in predecessors
+            ):
+                continue
 
-                try:
-                    if step["action"] == "regenerate_llm":
-                        _schedule_llm_step(database, step, engine)
+            with UnitOfWork(database) as uow:
+                claimed = uow.regeneration_plans.claim_step(
+                    step["id"],
+                    owner=owner,
+                    lease_seconds=claim_lease_seconds,
+                )
+            if claimed is None:
+                continue
+
+            try:
+                if claimed["action"] == "regenerate_llm":
+                    linked, waiting = _schedule_llm_step(
+                        database,
+                        claimed,
+                        engine,
+                    )
+                    if linked and waiting:
                         scheduled_async = True
-                    elif step["action"] in {
-                        "recompile_timeline",
-                        "repair_timeline_assets",
-                    }:
-                        _execute_local_step(database, step)
+                    elif linked:
                         made_local_progress = True
-                    else:
-                        raise ConflictError(
-                            "step action is not executable automatically: "
-                            + step["action"]
-                        )
-                except Exception as exc:
-                    with UnitOfWork(database) as uow:
-                        uow.regeneration_plans.set_step_status(
-                            step["id"],
-                            "failed",
-                            error=str(exc),
-                        )
+                elif claimed["action"] in {
+                    "recompile_timeline",
+                    "repair_timeline_assets",
+                }:
+                    if _execute_local_step(database, claimed):
+                        made_local_progress = True
+                else:
+                    raise ConflictError(
+                        "step action is not executable automatically: "
+                        + claimed["action"]
+                    )
+            except _StepDispatchDeferred:
+                _release_claim(database, claimed)
+            except Exception as exc:
+                if _fail_claim(database, claimed, str(exc)):
+                    made_local_progress = True
 
-            final = _finish_plan_state(database, plan_id)
-            if final["status"] != "running":
-                return final
-            if scheduled_async or not made_local_progress:
-                return final
-        raise RuntimeError(
-            "regeneration coordinator exceeded its progress iteration limit"
-        )
+        final = _finish_plan_state(database, plan_id)
+        if final["status"] != "running":
+            return final
+        if scheduled_async or not made_local_progress:
+            return final
+    raise RuntimeError(
+        "regeneration coordinator exceeded its progress iteration limit"
+    )
 
 
 def advance_plan_for_job(database, job_id: str, engine=None) -> None:
@@ -502,13 +632,12 @@ def recover_regeneration_plans(database, engine=None) -> int:
         try:
             advance_regeneration_plan(database, plan_id, engine)
         except Exception:
-            # A step-level failure is persisted by the coordinator. Recovery
-            # must continue scanning other plans even if one legacy plan is bad.
             continue
     return len(plan_ids)
 
 
 __all__ = [
+    "STEP_CLAIM_LEASE_SECONDS",
     "advance_plan_for_job",
     "advance_regeneration_plan",
     "recover_regeneration_plans",

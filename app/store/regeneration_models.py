@@ -92,6 +92,12 @@ class RegenerationPlanStepRow(Base):
             "plan_id",
             "status",
         ),
+        Index(
+            "ix_regeneration_steps_claimable",
+            "plan_id",
+            "status",
+            "claim_until",
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -178,6 +184,25 @@ class RegenerationPlanStepRow(Base):
         String(64),
         nullable=True,
         index=True,
+    )
+    claim_token: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        default="",
+    )
+    claim_owner: Mapped[str] = mapped_column(
+        String(160),
+        nullable=False,
+        default="",
+    )
+    claim_until: Mapped[float | None] = mapped_column(
+        Float,
+        nullable=True,
+    )
+    claim_attempt: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=0,
     )
     input_json: Mapped[str] = mapped_column(
         Text,

@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import time
 from copy import deepcopy
-from typing import Any
+from typing import Any, Iterable
 
-from sqlalchemy import select
+from sqlalchemy import func, or_, select, update
 
 from .json_codec import dumps, loads
 from .regeneration_models import (
@@ -47,6 +47,20 @@ TERMINAL_PLAN_STATUSES = frozenset(
 TERMINAL_STEP_STATUSES = frozenset(
     {"skipped", "succeeded", "failed", "canceled"}
 )
+NONTERMINAL_PLAN_STATUSES = PLAN_STATUSES - TERMINAL_PLAN_STATUSES
+NONTERMINAL_STEP_STATUSES = STEP_STATUSES - TERMINAL_STEP_STATUSES
+CLAIMABLE_STEP_STATUSES = frozenset(
+    {"ready", "waiting_for_predecessors"}
+)
+
+
+def _normalized_statuses(
+    values: Iterable[str] | None,
+) -> tuple[str, ...] | None:
+    if values is None:
+        return None
+    normalized = tuple(dict.fromkeys(str(value) for value in values))
+    return normalized or tuple()
 
 
 class RegenerationPlanRepository:
@@ -81,6 +95,10 @@ class RegenerationPlanRepository:
             ),
             "source_job_id": row.source_job_id,
             "job_id": row.job_id,
+            "claimed": bool(row.claim_token),
+            "claim_owner": row.claim_owner,
+            "claim_until": row.claim_until,
+            "claim_attempt": row.claim_attempt,
             "input": loads(row.input_json, {}),
             "result": loads(row.result_json, {}),
             "error": row.error,
@@ -188,10 +206,15 @@ class RegenerationPlanRepository:
                     order_index=order_index,
                     artifact_kind=str(item.get("artifact_kind") or ""),
                     artifact_name=str(item.get("artifact_name") or ""),
-                    unit_id=(str(item["unit_id"]) if item.get("unit_id") else None),
+                    unit_id=(
+                        str(item["unit_id"])
+                        if item.get("unit_id")
+                        else None
+                    ),
                     expected_version_id=(
                         str(item["expected_current_version_id"])
-                        if item.get("expected_current_version_id") else None
+                        if item.get("expected_current_version_id")
+                        else None
                     ),
                     action=str(item.get("action") or "manual"),
                     status=status,
@@ -213,16 +236,23 @@ class RegenerationPlanRepository:
                     ),
                     source_job_id=(
                         str(item["source_job_id"])
-                        if item.get("source_job_id") else None
+                        if item.get("source_job_id")
+                        else None
                     ),
                     job_id=None,
+                    claim_token="",
+                    claim_owner="",
+                    claim_until=None,
+                    claim_attempt=0,
                     input_json="{}",
                     result_json="{}",
                     error="",
                     created_at=now,
                     updated_at=now,
                     started_at=None,
-                    completed_at=(now if status == "skipped" else None),
+                    completed_at=(
+                        now if status == "skipped" else None
+                    ),
                 )
             )
         self.session.flush()
@@ -250,22 +280,51 @@ class RegenerationPlanRepository:
             ).all()
         )
 
-    def set_plan_status(self, plan_id, status, *, error=""):
+    def set_plan_status(
+        self,
+        plan_id,
+        status,
+        *,
+        error="",
+        expected_statuses: Iterable[str] | None = None,
+    ):
         if status not in PLAN_STATUSES:
-            raise ValueError(f"invalid regeneration plan status: {status}")
-        row = self._plan_row(plan_id)
+            raise ValueError(
+                f"invalid regeneration plan status: {status}"
+            )
+        self._plan_row(plan_id)
         now = time.time()
-        row.status = status
-        row.error = error
-        row.updated_at = now
-        if status == "running" and row.started_at is None:
-            row.started_at = now
-        if status in TERMINAL_PLAN_STATUSES:
-            row.completed_at = now
-        elif status in {"draft", "running", "blocked"}:
-            row.completed_at = None
-        self.session.flush()
-        return self._plan(row)
+        values: dict[str, Any] = {
+            "status": status,
+            "error": error,
+            "updated_at": now,
+            "completed_at": (
+                now if status in TERMINAL_PLAN_STATUSES else None
+            ),
+        }
+        if status == "running":
+            values["started_at"] = func.coalesce(
+                RegenerationPlanRow.started_at,
+                now,
+            )
+
+        statement = update(RegenerationPlanRow).where(
+            RegenerationPlanRow.id == plan_id
+        )
+        expected = _normalized_statuses(expected_statuses)
+        if expected is not None:
+            statement = statement.where(
+                RegenerationPlanRow.status.in_(expected)
+            )
+        changed = self.session.execute(
+            statement.values(**values).execution_options(
+                synchronize_session=False
+            )
+        )
+        self.session.expire_all()
+        if changed.rowcount != 1:
+            return self._plan(self._plan_row(plan_id))
+        return self._plan(self._plan_row(plan_id))
 
     def update_summary(self, plan_id, summary):
         row = self._plan_row(plan_id)
@@ -283,52 +342,286 @@ class RegenerationPlanRepository:
         result=None,
         error="",
         blockers=None,
+        expected_statuses: Iterable[str] | None = None,
+        clear_claim: bool = True,
     ):
         if status not in STEP_STATUSES:
-            raise ValueError(f"invalid regeneration step status: {status}")
-        row = self._step_row(step_id)
+            raise ValueError(
+                f"invalid regeneration step status: {status}"
+            )
+        self._step_row(step_id)
         now = time.time()
-        row.status = status
+        values: dict[str, Any] = {
+            "status": status,
+            "error": error,
+            "updated_at": now,
+            "completed_at": (
+                now if status in TERMINAL_STEP_STATUSES else None
+            ),
+        }
+        if status in {"queued", "running"}:
+            values["started_at"] = func.coalesce(
+                RegenerationPlanStepRow.started_at,
+                now,
+            )
         if job_id is not None:
-            row.job_id = job_id
+            values["job_id"] = job_id
         if result is not None:
-            row.result_json = dumps(deepcopy(result))
+            values["result_json"] = dumps(deepcopy(result))
         if blockers is not None:
-            row.blockers_json = dumps(deepcopy(blockers))
-        row.error = error
-        row.updated_at = now
-        if status in {"queued", "running"} and row.started_at is None:
-            row.started_at = now
-        if status in TERMINAL_STEP_STATUSES:
-            row.completed_at = now
-        else:
-            row.completed_at = None
-        self.session.flush()
-        return self._step(row)
+            values["blockers_json"] = dumps(deepcopy(blockers))
+        if clear_claim:
+            values.update(
+                {
+                    "claim_token": "",
+                    "claim_owner": "",
+                    "claim_until": None,
+                }
+            )
+
+        statement = update(RegenerationPlanStepRow).where(
+            RegenerationPlanStepRow.id == step_id
+        )
+        expected = _normalized_statuses(expected_statuses)
+        if expected is not None:
+            statement = statement.where(
+                RegenerationPlanStepRow.status.in_(expected)
+            )
+        changed = self.session.execute(
+            statement.values(**values).execution_options(
+                synchronize_session=False
+            )
+        )
+        self.session.expire_all()
+        if changed.rowcount != 1:
+            return self.get_step(step_id)
+        return self.get_step(step_id)
+
+    def claim_step(
+        self,
+        step_id: str,
+        *,
+        owner: str,
+        lease_seconds: float,
+        now: float | None = None,
+    ) -> dict[str, Any] | None:
+        """Atomically lease one executable Step across app processes."""
+
+        self._step_row(step_id)
+        claimed_at = time.time() if now is None else float(now)
+        lease = max(1.0, float(lease_seconds))
+        token = new_id()
+        normalized_owner = str(owner or "coordinator")[:160]
+        running_plan_ids = select(RegenerationPlanRow.id).where(
+            RegenerationPlanRow.status == "running"
+        )
+        changed = self.session.execute(
+            update(RegenerationPlanStepRow)
+            .where(
+                RegenerationPlanStepRow.id == step_id,
+                RegenerationPlanStepRow.status.in_(
+                    tuple(CLAIMABLE_STEP_STATUSES)
+                ),
+                or_(
+                    RegenerationPlanStepRow.claim_until.is_(None),
+                    RegenerationPlanStepRow.claim_until <= claimed_at,
+                ),
+                RegenerationPlanStepRow.plan_id.in_(
+                    running_plan_ids
+                ),
+            )
+            .values(
+                claim_token=token,
+                claim_owner=normalized_owner,
+                claim_until=claimed_at + lease,
+                claim_attempt=(
+                    RegenerationPlanStepRow.claim_attempt + 1
+                ),
+                started_at=func.coalesce(
+                    RegenerationPlanStepRow.started_at,
+                    claimed_at,
+                ),
+                updated_at=claimed_at,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        self.session.expire_all()
+        if changed.rowcount != 1:
+            return None
+        step = self.get_step(step_id)
+        step["_claim_token"] = token
+        return step
+
+    def owns_step_claim(
+        self,
+        step_id: str,
+        claim_token: str,
+    ) -> bool:
+        return bool(
+            self.session.scalar(
+                select(RegenerationPlanStepRow.id).where(
+                    RegenerationPlanStepRow.id == step_id,
+                    RegenerationPlanStepRow.claim_token == claim_token,
+                )
+            )
+        )
+
+    def renew_step_claim(
+        self,
+        step_id: str,
+        claim_token: str,
+        *,
+        lease_seconds: float,
+        now: float | None = None,
+    ) -> bool:
+        renewed_at = time.time() if now is None else float(now)
+        changed = self.session.execute(
+            update(RegenerationPlanStepRow)
+            .where(
+                RegenerationPlanStepRow.id == step_id,
+                RegenerationPlanStepRow.claim_token == claim_token,
+            )
+            .values(
+                claim_until=renewed_at
+                + max(1.0, float(lease_seconds)),
+                updated_at=renewed_at,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        self.session.expire_all()
+        return changed.rowcount == 1
+
+    def release_step_claim(
+        self,
+        step_id: str,
+        claim_token: str,
+    ) -> bool:
+        changed = self.session.execute(
+            update(RegenerationPlanStepRow)
+            .where(
+                RegenerationPlanStepRow.id == step_id,
+                RegenerationPlanStepRow.claim_token == claim_token,
+            )
+            .values(
+                claim_token="",
+                claim_owner="",
+                claim_until=None,
+                updated_at=time.time(),
+            )
+            .execution_options(synchronize_session=False)
+        )
+        self.session.expire_all()
+        return changed.rowcount == 1
+
+    def complete_step_claim(
+        self,
+        step_id: str,
+        claim_token: str,
+        status: str,
+        *,
+        job_id=None,
+        result=None,
+        error="",
+        blockers=None,
+    ) -> dict[str, Any] | None:
+        """Finish a claimed dispatch only if this token still owns it."""
+
+        if status not in STEP_STATUSES:
+            raise ValueError(
+                f"invalid regeneration step status: {status}"
+            )
+        now = time.time()
+        values: dict[str, Any] = {
+            "status": status,
+            "error": error,
+            "updated_at": now,
+            "completed_at": (
+                now if status in TERMINAL_STEP_STATUSES else None
+            ),
+            "claim_token": "",
+            "claim_owner": "",
+            "claim_until": None,
+        }
+        if status in {"queued", "running"}:
+            values["started_at"] = func.coalesce(
+                RegenerationPlanStepRow.started_at,
+                now,
+            )
+        if job_id is not None:
+            values["job_id"] = job_id
+        if result is not None:
+            values["result_json"] = dumps(deepcopy(result))
+        if blockers is not None:
+            values["blockers_json"] = dumps(deepcopy(blockers))
+
+        changed = self.session.execute(
+            update(RegenerationPlanStepRow)
+            .where(
+                RegenerationPlanStepRow.id == step_id,
+                RegenerationPlanStepRow.claim_token == claim_token,
+            )
+            .values(**values)
+            .execution_options(synchronize_session=False)
+        )
+        self.session.expire_all()
+        if changed.rowcount != 1:
+            return None
+        return self.get_step(step_id)
 
     def set_step_input(self, step_id, value, *, status):
         if status not in {"ready", "waiting_for_predecessors"}:
-            raise ValueError("step input can only release a waiting step")
+            raise ValueError(
+                "step input can only release a waiting step"
+            )
         row = self._step_row(step_id)
         if row.action != "repair_timeline_assets":
             raise ConflictError(
                 "structured input is not supported for this step"
             )
-        if row.status not in {"requires_input", "blocked"}:
-            raise ConflictError(
-                "step is not waiting for structured input"
+        now = time.time()
+        nonterminal_plan_ids = select(RegenerationPlanRow.id).where(
+            RegenerationPlanRow.status.in_(
+                tuple(NONTERMINAL_PLAN_STATUSES)
             )
-        row.input_json = dumps(deepcopy(value))
-        row.status = status
-        row.blockers_json = "[]"
-        row.error = ""
-        row.updated_at = time.time()
-        row.completed_at = None
-        self.session.flush()
-        return self._step(row)
+        )
+        changed = self.session.execute(
+            update(RegenerationPlanStepRow)
+            .where(
+                RegenerationPlanStepRow.id == step_id,
+                RegenerationPlanStepRow.action
+                == "repair_timeline_assets",
+                RegenerationPlanStepRow.status.in_(
+                    ("requires_input", "blocked")
+                ),
+                RegenerationPlanStepRow.plan_id.in_(
+                    nonterminal_plan_ids
+                ),
+            )
+            .values(
+                input_json=dumps(deepcopy(value)),
+                status=status,
+                blockers_json="[]",
+                error="",
+                claim_token="",
+                claim_owner="",
+                claim_until=None,
+                updated_at=now,
+                completed_at=None,
+            )
+            .execution_options(synchronize_session=False)
+        )
+        self.session.expire_all()
+        if changed.rowcount != 1:
+            raise ConflictError(
+                "step changed while structured input was saved"
+            )
+        return self.get_step(step_id)
 
 
 __all__ = [
+    "CLAIMABLE_STEP_STATUSES",
+    "NONTERMINAL_PLAN_STATUSES",
+    "NONTERMINAL_STEP_STATUSES",
     "PLAN_STATUSES",
     "STEP_STATUSES",
     "TERMINAL_PLAN_STATUSES",

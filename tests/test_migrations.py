@@ -37,9 +37,14 @@ def test_fresh_database_runs_all_migrations(tmp_path):
         } <= tables
         operation_columns = {
             item["name"]
-            for item in inspect(database.engine).get_columns("operation_logs")
+            for item in inspect(database.engine).get_columns(
+                "operation_logs"
+            )
         }
-        assert {"reverted_by_operation_id", "reverted_at"} <= operation_columns
+        assert {
+            "reverted_by_operation_id",
+            "reverted_at",
+        } <= operation_columns
         asset_dependency_columns = {
             item["name"]
             for item in inspect(database.engine).get_columns(
@@ -58,7 +63,10 @@ def test_fresh_database_runs_all_migrations(tmp_path):
             )
         }
         assert {
-            "snapshot_sha256", "status", "started_at", "completed_at"
+            "snapshot_sha256",
+            "status",
+            "started_at",
+            "completed_at",
         } <= plan_columns
         step_columns = {
             item["name"]
@@ -67,9 +75,23 @@ def test_fresh_database_runs_all_migrations(tmp_path):
             )
         }
         assert {
-            "expected_version_id", "depends_on_artifact_ids_json",
-            "job_id", "input_json", "result_json",
+            "expected_version_id",
+            "depends_on_artifact_ids_json",
+            "job_id",
+            "claim_token",
+            "claim_owner",
+            "claim_until",
+            "claim_attempt",
+            "input_json",
+            "result_json",
         } <= step_columns
+        step_indexes = {
+            item["name"]
+            for item in inspect(database.engine).get_indexes(
+                "regeneration_plan_steps"
+            )
+        }
+        assert "ix_regeneration_steps_claimable" in step_indexes
     finally:
         database.engine.dispose()
 
@@ -122,11 +144,26 @@ def test_pre_alembic_database_is_stamped_then_upgraded(tmp_path):
         assert _revision(database) == HEAD_REVISION
         tables = set(inspect(database.engine).get_table_names())
         assert {
-            "operation_logs", "artifact_dependencies",
-            "asset_dependencies", "artifact_provenance",
-            "artifact_freshness", "regeneration_plans",
+            "operation_logs",
+            "artifact_dependencies",
+            "asset_dependencies",
+            "artifact_provenance",
+            "artifact_freshness",
+            "regeneration_plans",
             "regeneration_plan_steps",
         } <= tables
+        step_columns = {
+            item["name"]
+            for item in inspect(database.engine).get_columns(
+                "regeneration_plan_steps"
+            )
+        }
+        assert {
+            "claim_token",
+            "claim_owner",
+            "claim_until",
+            "claim_attempt",
+        } <= step_columns
         with database.engine.connect() as connection:
             title = connection.execute(
                 text(
