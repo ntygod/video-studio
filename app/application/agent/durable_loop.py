@@ -118,10 +118,11 @@ def _live_token(
         return
     live_emit(
         {
-            "id": f"{turn_id}:live:{token_index}",
             "type": "token",
             "text": text,
             "durable": False,
+            "turn_id": turn_id,
+            "token_index": token_index,
         }
     )
 
@@ -252,7 +253,7 @@ def _adapter_for_checkpoint(database, checkpoint):
         provider["models"] = selected + [
             model for model in models if model not in selected
         ]
-    return build_adapter(provider)
+    return build_adapter(provider, model_id=model_id or None)
 
 
 def _assert_turn_active(
