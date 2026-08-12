@@ -2,11 +2,9 @@
  * React Query 的 key 工厂。
  * <p>
  * 所有 query key 集中在这里定义，避免各处手写字符串数组导致 invalidate 打不中。
- * 约定：key 的第一段是资源名，后续段按"从大到小"的作用域排列，这样
- * invalidateQueries({queryKey: qk.artifactsRoot(pid)}) 能一次性命中该项目下所有单元的稿件。
+ * 约定：key 的第一段是资源名，后续段按"从大到小"的作用域排列。
  */
 
-/** unit 作用域的归一化：undefined/null 表示"整个项目"。 */
 function scope(unitId?: string | null): string {
     return unitId || "__project__";
 }
@@ -28,6 +26,12 @@ export const qk = {
     freshness: (projectId: string, includeFresh = false) =>
         ["artifact-freshness", projectId, includeFresh ? "all" : "actionable"] as const,
     artifactImpact: (artifactId: string) => ["artifact-impact", artifactId] as const,
+    artifactAssetDependencies: (artifactId: string) =>
+        ["artifact-asset-dependencies", artifactId] as const,
+    regenerationPlansRoot: (projectId: string) =>
+        ["regeneration-plans", projectId] as const,
+    regenerationPlan: (planId: string) =>
+        ["regeneration-plan", planId] as const,
 
     conversationsRoot: (projectId: string) => ["conversations", projectId] as const,
     conversations: (projectId: string, unitId?: string | null) => ["conversations", projectId, scope(unitId)] as const,
