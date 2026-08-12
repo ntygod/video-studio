@@ -15,6 +15,7 @@ from app.store import dependency_models  # noqa: E402,F401
 from app.store import models  # noqa: E402,F401
 from app.store import operation_models  # noqa: E402,F401
 from app.store import regeneration_models  # noqa: E402,F401
+from app.store import regeneration_replan_models  # noqa: E402,F401
 from app.store.database import Base  # noqa: E402
 
 config = context.config

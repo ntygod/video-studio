@@ -6,6 +6,7 @@ from app.store import dependency_models  # noqa: F401
 from app.store import models  # noqa: F401
 from app.store import operation_models  # noqa: F401
 from app.store import regeneration_models  # noqa: F401
+from app.store import regeneration_replan_models  # noqa: F401
 from app.store.database import Base, Database
 from app.store.migrations import BASELINE_REVISION, HEAD_REVISION
 
@@ -33,7 +34,7 @@ def test_fresh_database_runs_all_migrations(tmp_path):
             "artifact_dependencies", "asset_dependencies",
             "artifact_provenance", "artifact_freshness",
             "regeneration_plans", "regeneration_plan_steps",
-            "alembic_version",
+            "regeneration_plan_replans", "alembic_version",
         } <= tables
         operation_columns = {
             item["name"]
@@ -88,6 +89,20 @@ def test_fresh_database_runs_all_migrations(tmp_path):
             "input_json",
             "result_json",
         } <= step_columns
+        replan_columns = {
+            item["name"]
+            for item in inspect(database.engine).get_columns(
+                "regeneration_plan_replans"
+            )
+        }
+        assert {
+            "source_plan_id",
+            "target_plan_id",
+            "source_status",
+            "source_execution_attempt",
+            "target_snapshot_sha256",
+            "reason",
+        } <= replan_columns
         step_indexes = {
             item["name"]
             for item in inspect(database.engine).get_indexes(
@@ -95,6 +110,16 @@ def test_fresh_database_runs_all_migrations(tmp_path):
             )
         }
         assert "ix_regeneration_steps_claimable" in step_indexes
+        replan_unique = {
+            item["name"]
+            for item in inspect(database.engine).get_unique_constraints(
+                "regeneration_plan_replans"
+            )
+        }
+        assert {
+            "uq_regeneration_replan_source",
+            "uq_regeneration_replan_target",
+        } <= replan_unique
     finally:
         database.engine.dispose()
 
@@ -106,6 +131,7 @@ def test_pre_alembic_database_is_stamped_then_upgraded(tmp_path):
     Base.metadata.create_all(legacy_engine)
     with legacy_engine.begin() as connection:
         for table in (
+            "regeneration_plan_replans",
             "regeneration_plan_steps",
             "regeneration_plans",
             "asset_dependencies",
@@ -154,6 +180,7 @@ def test_pre_alembic_database_is_stamped_then_upgraded(tmp_path):
             "artifact_freshness",
             "regeneration_plans",
             "regeneration_plan_steps",
+            "regeneration_plan_replans",
         } <= tables
         plan_columns = {
             item["name"]
