@@ -15,6 +15,9 @@ from app.application.freshness_service import (
     list_project_artifact_freshness,
 )
 from app.application.job_engine import get_job_engine
+from app.application.regeneration_preview_service import (
+    preview_regeneration_cascade,
+)
 from app.application.regeneration_service import (
     prepare_artifact_regeneration,
 )
@@ -44,6 +47,14 @@ class DerivationCreate(BaseModel):
                 "derivation requires ArtifactVersion or Asset inputs"
             )
         return self
+
+
+class RegenerationPreviewRequest(BaseModel):
+    artifact_ids: list[str] = Field(
+        min_length=1,
+        max_length=500,
+    )
+    include_downstream: bool = True
 
 
 @router.post(
@@ -82,6 +93,23 @@ def get_project_freshness(
             uow,
             project_id,
             include_fresh=include_fresh,
+        )
+
+
+@router.post(
+    "/api/projects/{project_id}/artifact-regeneration/preview"
+)
+def preview_project_regeneration(
+    project_id: str,
+    data: RegenerationPreviewRequest,
+    request: Request,
+):
+    with UnitOfWork(request.app.state.database) as uow:
+        return preview_regeneration_cascade(
+            uow,
+            project_id,
+            data.artifact_ids,
+            include_downstream=data.include_downstream,
         )
 
 
