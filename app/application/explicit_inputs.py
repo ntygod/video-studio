@@ -1,4 +1,4 @@
-"""Resolve explicit Artifact and Asset references into immutable Job inputs."""
+"""Resolve explicit Artifact and Asset references into immutable inputs."""
 
 from __future__ import annotations
 
@@ -58,7 +58,7 @@ def _require_artifact_project(
 ) -> dict[str, Any]:
     artifact = uow.artifacts.get(artifact_id)
     if artifact["project_id"] != project_id:
-        # Match the rest of the API boundary: do not reveal a foreign entity.
+        # Match the API boundary: never reveal a foreign entity as readable.
         raise NotFoundError(artifact_id)
     return artifact
 
@@ -88,18 +88,53 @@ def _require_asset_project(
     return asset
 
 
+def _resolve_reference(
+    uow,
+    project_id: str,
+    ref: Mapping[str, Any],
+    version_ids: list[str],
+    asset_ids: list[str],
+) -> None:
+    ref_type = str(ref.get("type") or "").strip().lower()
+    ref_id = str(ref.get("id") or "").strip()
+    if not ref_id:
+        return
+    if ref_type in _ARTIFACT_TYPES:
+        artifact = _require_artifact_project(
+            uow,
+            ref_id,
+            project_id,
+        )
+        current_version_id = str(
+            artifact.get("current_version_id") or ""
+        )
+        if not current_version_id:
+            raise CommandValidationError(
+                f"explicit Artifact has no current version: {ref_id}"
+            )
+        _append_unique(version_ids, current_version_id)
+    elif ref_type in _VERSION_TYPES:
+        _require_version_project(uow, ref_id, project_id)
+        _append_unique(version_ids, ref_id)
+    elif ref_type in _ASSET_TYPES:
+        _require_asset_project(uow, ref_id, project_id)
+        _append_unique(asset_ids, ref_id)
+    # Unit, project and Bible references remain prompt context only. Expanding
+    # them would create hidden, time-varying dependency sets.
+
+
 def resolve_explicit_job_inputs(
     uow,
     project_id: str,
-    turn_id: str,
+    turn_id: str | None,
     payload: Mapping[str, Any] | None = None,
 ) -> tuple[list[str], list[str]]:
-    """Return exact version and Asset IDs for an Agent generation Job.
+    """Return exact ArtifactVersion and Asset IDs for one production action.
 
-    Inputs come only from explicit request fields, the current Agent turn's
-    ``context_refs`` and project ``pinned_refs``. Unit/project references are
-    intentionally ignored: expanding them into every contained entity would
-    create hidden dependencies and unstable idempotency semantics.
+    Request fields are always resolved. When ``turn_id`` is present, the
+    current Agent turn's ``context_refs`` and project ``pinned_refs`` are added
+    in that order. The result is deduplicated while preserving first-seen
+    order, which makes persisted Job and derivation inputs deterministic.
     """
 
     requested = dict(payload or {})
@@ -117,15 +152,13 @@ def resolve_explicit_job_inputs(
         value = str(artifact_id or "")
         if not value:
             continue
-        artifact = _require_artifact_project(uow, value, project_id)
-        current_version_id = str(
-            artifact.get("current_version_id") or ""
+        _resolve_reference(
+            uow,
+            project_id,
+            {"type": "artifact", "id": value},
+            version_ids,
+            asset_ids,
         )
-        if not current_version_id:
-            raise CommandValidationError(
-                f"explicit Artifact has no current version: {value}"
-            )
-        _append_unique(version_ids, current_version_id)
 
     for asset_id in requested.get("input_asset_ids") or []:
         value = str(asset_id or "")
@@ -134,36 +167,21 @@ def resolve_explicit_job_inputs(
         _require_asset_project(uow, value, project_id)
         _append_unique(asset_ids, value)
 
-    project = uow.projects.get(project_id)
-    refs: Iterable[dict[str, Any]] = [
-        *_turn_refs(uow, turn_id),
-        *_pinned_refs(project),
-    ]
+    refs: Iterable[dict[str, Any]] = []
+    if turn_id:
+        project = uow.projects.get(project_id)
+        refs = [
+            *_turn_refs(uow, turn_id),
+            *_pinned_refs(project),
+        ]
     for ref in refs:
-        ref_type = str(ref.get("type") or "").strip().lower()
-        ref_id = str(ref.get("id") or "").strip()
-        if not ref_id:
-            continue
-        if ref_type in _ARTIFACT_TYPES:
-            artifact = _require_artifact_project(
-                uow,
-                ref_id,
-                project_id,
-            )
-            current_version_id = str(
-                artifact.get("current_version_id") or ""
-            )
-            if not current_version_id:
-                raise CommandValidationError(
-                    f"explicit Artifact has no current version: {ref_id}"
-                )
-            _append_unique(version_ids, current_version_id)
-        elif ref_type in _VERSION_TYPES:
-            _require_version_project(uow, ref_id, project_id)
-            _append_unique(version_ids, ref_id)
-        elif ref_type in _ASSET_TYPES:
-            _require_asset_project(uow, ref_id, project_id)
-            _append_unique(asset_ids, ref_id)
+        _resolve_reference(
+            uow,
+            project_id,
+            ref,
+            version_ids,
+            asset_ids,
+        )
 
     return version_ids, asset_ids
 
