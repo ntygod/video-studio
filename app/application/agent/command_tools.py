@@ -33,15 +33,22 @@ def _running_step_id(
     ctx: ToolContext,
     tool_name: str,
 ) -> str:
+    explicit = str(getattr(ctx, "step_id", "") or "")
     for step in reversed(
         ctx.uow.agent_turns.steps(ctx.turn_id)
     ):
+        if explicit and step["id"] != explicit:
+            continue
         if (
             step["kind"] == "tool"
             and step["tool_name"] == tool_name
             and step["status"] == "running"
         ):
             return step["id"]
+    if explicit:
+        raise RuntimeError(
+            f"Agent tool step is not running: {explicit}"
+        )
     raise RuntimeError(
         f"Agent tool step is missing: {tool_name}"
     )
