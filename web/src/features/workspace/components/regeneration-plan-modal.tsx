@@ -20,12 +20,12 @@ import {
     regenerationActionLabel,
     regenerationPlanHasUnresolvedInput,
     regenerationPlanMeta,
+    regenerationPlanRetryBlocker,
     regenerationStepMeta,
 } from "@/features/workspace/lib/regeneration-plan";
 import type {
     AssetDependencyInput,
     ProjectArtifactFreshnessItem,
-    RegenerationPlan,
     RegenerationPlanStep,
     RegenerationPreviewStep,
 } from "@/services/api";
@@ -36,6 +36,7 @@ import {
     useCreateRegenerationPlan,
     usePreviewRegenerationCascade,
     useRegenerationPlan,
+    useRetryRegenerationPlan,
     useSetRegenerationPlanStepInput,
     useStartRegenerationPlan,
 } from "@/services/queries";
@@ -308,6 +309,50 @@ function AssetReplacementEditor({
     );
 }
 
+function AttemptHistoryDisclosure({
+    step,
+}: {
+    step: RegenerationPlanStep;
+}) {
+    if (!step.attempt_history.length) return null;
+    return (
+        <details className="mt-3 border-t border-[var(--hairline)] pt-3">
+            <summary className="cursor-pointer text-caption font-medium text-[var(--s-muted)] transition-colors hover:text-[var(--s-ink)]">
+                查看 {step.attempt_history.length} 次历史失败
+            </summary>
+            <div className="mt-2 space-y-2">
+                {step.attempt_history.map((attempt) => (
+                    <div
+                        key={`${attempt.attempt}:${attempt.recorded_at}`}
+                        className="rounded-[var(--r-sm)] bg-[var(--s-panel)] px-3 py-2"
+                    >
+                        <Text
+                            as="p"
+                            variant="caption"
+                            tone="faint"
+                        >
+                            第 {attempt.attempt + 1} 次尝试
+                            {attempt.job_id
+                                ? ` · Job ${attempt.job_id.slice(0, 12)}`
+                                : ""}
+                        </Text>
+                        {attempt.error ? (
+                            <Text
+                                as="p"
+                                variant="caption"
+                                tone="danger"
+                                className="mt-1 leading-5"
+                            >
+                                {attempt.error}
+                            </Text>
+                        ) : null}
+                    </div>
+                ))}
+            </div>
+        </details>
+    );
+}
+
 function PlanStepCard({
     projectId,
     step,
@@ -341,6 +386,7 @@ function PlanStepCard({
                         className="mt-1"
                     >
                         {regenerationActionLabel(step.action)}
+                        {` · 第 ${step.execution_attempt + 1} 次尝试`}
                         {step.depends_on_artifact_ids.length
                             ? ` · ${step.depends_on_artifact_ids.length} 个前序步骤`
                             : ""}
@@ -385,6 +431,7 @@ function PlanStepCard({
                             step={step}
                         />
                     ) : null}
+                    <AttemptHistoryDisclosure step={step} />
                     <Link
                         href={versionsHref(
                             projectId,
@@ -423,6 +470,7 @@ export function RegenerationPlanModal({
     const createPlan = useCreateRegenerationPlan(projectId);
     const planQuery = useRegenerationPlan(planId);
     const startPlan = useStartRegenerationPlan(projectId);
+    const retryPlan = useRetryRegenerationPlan(projectId);
     const cancelPlan = useCancelRegenerationPlan(projectId);
 
     const previewCascade = preview.mutateAsync;
@@ -457,6 +505,7 @@ export function RegenerationPlanModal({
         ? isRegenerationPlanTerminal(plan.status)
         : false;
     const unresolvedInput = regenerationPlanHasUnresolvedInput(plan);
+    const retryBlocker = regenerationPlanRetryBlocker(plan);
     const planMeta = plan ? regenerationPlanMeta(plan.status) : null;
 
     const create = async () => {
@@ -488,6 +537,26 @@ export function RegenerationPlanModal({
         } catch (error) {
             message.error(
                 error instanceof Error ? error.message : "计划启动失败",
+            );
+        }
+    };
+
+    const retry = async () => {
+        if (!plan || plan.status !== "failed" || retryBlocker) return;
+        try {
+            const retried = await retryPlan.mutateAsync({
+                planId: plan.id,
+                expectedExecutionAttempt: plan.execution_attempt,
+            });
+            setPlanId(retried.id);
+            message.success(
+                retried.status === "succeeded"
+                    ? "失败步骤重试后已完成"
+                    : "失败步骤已进入新的执行尝试",
+            );
+        } catch (error) {
+            message.error(
+                error instanceof Error ? error.message : "计划重试失败",
             );
         }
     };
@@ -553,6 +622,26 @@ export function RegenerationPlanModal({
                         onClick={() => void start()}
                     >
                         开始执行
+                    </Button>
+                </span>
+            </Tooltip>,
+        );
+    }
+    if (plan?.status === "failed") {
+        footer.push(
+            <Tooltip
+                key="retry-tip"
+                title={retryBlocker || undefined}
+            >
+                <span>
+                    <Button
+                        variant="primary"
+                        icon={<RefreshCw className="size-3.5" />}
+                        disabled={Boolean(retryBlocker)}
+                        loading={retryPlan.isPending}
+                        onClick={() => void retry()}
+                    >
+                        重试失败步骤
                     </Button>
                 </span>
             </Tooltip>,
@@ -644,13 +733,17 @@ export function RegenerationPlanModal({
                                 <StatusDot tone={planMeta.dotTone} />
                             ) : null}
                             <Text variant="body" tone="ink" weight={600}>
-                                {plan.summary.completed || 0}/
+                                第 {plan.execution_attempt + 1} 次执行 · {plan.summary.completed || 0}/
                                 {plan.summary.total || plan.steps?.length || 0} 步已完成
                             </Text>
                         </div>
                         {plan.status === "running" ? (
                             <Text variant="caption" tone="info">
                                 页面关闭后计划仍会持久化执行
+                            </Text>
+                        ) : plan.status === "failed" ? (
+                            <Text variant="caption" tone="warning">
+                                重试只重置失败步骤，已成功版本会保留
                             </Text>
                         ) : null}
                     </div>
