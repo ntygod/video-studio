@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 import uuid
@@ -16,7 +17,6 @@ from app.application.task_runtime_engine import (
     TaskRuntimeEngine,
 )
 from app.store import UnitOfWork
-from app.store.models import AgentStepRow
 from app.store.repositories import ConflictError
 from app.store.task_runtime_models import RuntimeTaskRow
 
@@ -204,6 +204,164 @@ class DurableAgentTurnExecutor:
         else:
             future.set_result(result)
 
+    def _append_missing_event(
+        self,
+        context: TaskExecutionContext,
+        turn_id: str,
+        event_type: str,
+        event: dict[str, Any],
+    ) -> dict[str, Any]:
+        stored = context.emit(
+            event_type,
+            {"turn_id": turn_id, **event},
+        )
+        live_event = {
+            "id": f"{turn_id}:{stored['seq']}",
+            "seq": stored["seq"],
+            **event,
+        }
+        self._emit(turn_id, live_event)
+        return stored
+
+    def _ensure_success_events(
+        self,
+        context: TaskExecutionContext,
+        turn_id: str,
+        result: dict[str, Any],
+    ) -> None:
+        """Repair structural events after a commit/event crash window.
+
+        AgentStep, created entities, assistant message, and Turn status are
+        durable facts. RuntimeTaskEvent is a delivery log. If the process dies
+        after the fact commits but before its event is appended, a later
+        Attempt reconstructs the missing event exactly once.
+        """
+
+        with UnitOfWork(self.database) as uow:
+            turn = uow.agent_turns.get(turn_id)
+            messages = uow.conversations.list_messages(
+                turn["conversation_id"]
+            )
+        message_text = next(
+            (
+                str(message.get("content") or "")
+                for message in messages
+                if message["id"] == turn.get("assistant_message_id")
+            ),
+            "",
+        )
+        events = context.runtime.events(
+            context.plan["id"],
+            after_seq=0,
+            limit=1000,
+        )
+        started_steps = {
+            str((event.get("payload") or {}).get("step_id") or "")
+            for event in events
+            if event["event_type"] == "agent.step.start"
+        }
+        completed_steps = {
+            str((event.get("payload") or {}).get("step_id") or "")
+            for event in events
+            if event["event_type"] == "agent.step.done"
+        }
+        emitted_entities = {
+            (
+                str(entity.get("type") or ""),
+                str(entity.get("id") or ""),
+            )
+            for event in events
+            if event["event_type"] == "agent.entity"
+            for entity in [(event.get("payload") or {}).get("entity") or {}]
+        }
+        event_types = {event["event_type"] for event in events}
+
+        for step in turn.get("steps") or []:
+            if step["kind"] != "tool":
+                continue
+            step_id = str(step["id"])
+            if step_id not in started_steps:
+                self._append_missing_event(
+                    context,
+                    turn_id,
+                    "agent.step.start",
+                    {
+                        "type": "step.start",
+                        "step_id": step_id,
+                        "tool": step["tool_name"],
+                        "args_preview": json.dumps(
+                            step.get("arguments") or {},
+                            ensure_ascii=False,
+                        )[:80],
+                    },
+                )
+                started_steps.add(step_id)
+            if (
+                step["status"] in {"ok", "failed"}
+                and step_id not in completed_steps
+            ):
+                self._append_missing_event(
+                    context,
+                    turn_id,
+                    "agent.step.done",
+                    {
+                        "type": "step.done",
+                        "step_id": step_id,
+                        "ok": step["status"] == "ok",
+                        "duration_ms": step["duration_ms"],
+                        "summary": step["summary"],
+                    },
+                )
+                completed_steps.add(step_id)
+
+        for entity in turn.get("created_entities") or []:
+            key = (str(entity["type"]), str(entity["id"]))
+            if key in emitted_entities:
+                continue
+            self._append_missing_event(
+                context,
+                turn_id,
+                "agent.entity",
+                {"type": "entity", "entity": entity},
+            )
+            emitted_entities.add(key)
+
+        if "agent.message" not in event_types:
+            self._append_missing_event(
+                context,
+                turn_id,
+                "agent.message",
+                {
+                    "type": "message",
+                    "message_id": turn.get("assistant_message_id"),
+                    "text": message_text or "已完成。",
+                },
+            )
+        if "agent.done" not in event_types:
+            self._append_missing_event(
+                context,
+                turn_id,
+                "agent.done",
+                {
+                    "type": "done",
+                    "message_id": turn.get("assistant_message_id"),
+                    "usage": {
+                        "prompt": int(
+                            result.get("prompt_tokens")
+                            or turn.get("prompt_tokens")
+                            or 0
+                        ),
+                        "completion": int(
+                            result.get("completion_tokens")
+                            or turn.get("completion_tokens")
+                            or 0
+                        ),
+                    },
+                    "canceled": False,
+                    "failed": False,
+                },
+            )
+
     def _mark_turn_failed(
         self,
         context: TaskExecutionContext,
@@ -294,6 +452,7 @@ class DurableAgentTurnExecutor:
                 live_emit=lambda event: self._emit(turn_id, event),
                 request_id=request_id,
             )
+            self._ensure_success_events(context, turn_id, result)
             self._finish_future(turn_id, result=result)
             return result
         except TaskExecutionCanceled:
@@ -428,7 +587,40 @@ def get_durable_agent_turn_executor(
     return executor
 
 
+def _register_startup(app, callback: Callable[[], None]) -> None:
+    router = getattr(app, "router", None)
+    startup_handlers = getattr(router, "on_startup", None)
+    if hasattr(startup_handlers, "append"):
+        startup_handlers.append(callback)
+        return
+    for owner in (router, app):
+        add_handler = getattr(owner, "add_event_handler", None)
+        if callable(add_handler):
+            add_handler("startup", callback)
+            return
+    raise RuntimeError("FastAPI runtime has no startup hook")
+
+
+def install_durable_agent_runtime(app) -> None:
+    """Start Agent recovery with the application, before browser traffic."""
+
+    if getattr(app.state, "durable_agent_startup_installed", False):
+        return
+    app.state.durable_agent_startup_installed = True
+
+    def startup() -> None:
+        from app.application.job_engine import get_job_engine
+
+        get_durable_agent_turn_executor(
+            app,
+            get_job_engine(app),
+        ).start()
+
+    _register_startup(app, startup)
+
+
 __all__ = [
     "DurableAgentTurnExecutor",
     "get_durable_agent_turn_executor",
+    "install_durable_agent_runtime",
 ]

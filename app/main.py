@@ -11,6 +11,9 @@ from fastapi import FastAPI
 from .api.errors import install_error_handlers
 from .api.logging import install_request_logging
 from .api.routes import routers
+from .application.agent.durable_executor import (
+    install_durable_agent_runtime,
+)
 from .application.commands.recovery import (
     recover_interrupted_operations,
 )
@@ -55,6 +58,7 @@ def create_app(app_settings: Settings | None = None) -> FastAPI:
     install_request_logging(app)
     for router in routers:
         app.include_router(router)
+    install_durable_agent_runtime(app)
     return app
 
 
