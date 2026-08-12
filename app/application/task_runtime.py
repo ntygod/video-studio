@@ -5,6 +5,8 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Iterable, Sequence
 
+from sqlalchemy.exc import IntegrityError
+
 from app.store import UnitOfWork
 
 
@@ -115,52 +117,72 @@ class TaskRuntime:
         definitions = _normalized_task_definitions(tasks)
         if not definitions:
             raise ValueError("runtime plan requires at least one task")
-        with UnitOfWork(self.database) as uow:
-            uow.projects.get(project_id)
-            if idempotency_key:
+
+        try:
+            with UnitOfWork(self.database) as uow:
+                uow.projects.get(project_id)
+                if idempotency_key:
+                    existing = (
+                        uow.task_runtime.find_plan_by_idempotency(
+                            kind,
+                            idempotency_key,
+                        )
+                    )
+                    if existing is not None:
+                        return existing
+                plan = uow.task_runtime.create_plan(
+                    project_id=project_id,
+                    kind=kind,
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    idempotency_key=idempotency_key,
+                    priority=priority,
+                    input=input,
+                    policy=policy,
+                    budget=budget,
+                )
+                by_key: dict[str, str] = {}
+                for definition in definitions:
+                    task = uow.task_runtime.add_task(
+                        plan["id"],
+                        task_key=definition["key"],
+                        task_type=definition["type"],
+                        payload=definition["payload"],
+                        policy=definition["policy"],
+                        priority=definition["priority"],
+                        order_index=definition["order_index"],
+                        max_attempts=definition["max_attempts"],
+                        timeout_seconds=definition["timeout_seconds"],
+                        available_at=definition["available_at"],
+                    )
+                    by_key[definition["key"]] = task["id"]
+                for definition in definitions:
+                    uow.task_runtime.set_task_dependencies(
+                        by_key[definition["key"]],
+                        [
+                            by_key[key]
+                            for key in definition["depends_on"]
+                        ],
+                    )
+                if queue:
+                    result = uow.task_runtime.queue_plan(plan["id"])
+                else:
+                    result = uow.task_runtime.get_plan(plan["id"])
+            return result
+        except IntegrityError:
+            # Two application processes may race after both observe no Plan.
+            # The database unique constraint chooses the winner; the loser
+            # must replay the committed Plan rather than surface a 500.
+            if not idempotency_key:
+                raise
+            with UnitOfWork(self.database) as uow:
                 existing = uow.task_runtime.find_plan_by_idempotency(
                     kind,
                     idempotency_key,
                 )
-                if existing is not None:
-                    return existing
-            plan = uow.task_runtime.create_plan(
-                project_id=project_id,
-                kind=kind,
-                subject_type=subject_type,
-                subject_id=subject_id,
-                idempotency_key=idempotency_key,
-                priority=priority,
-                input=input,
-                policy=policy,
-                budget=budget,
-            )
-            by_key: dict[str, str] = {}
-            for definition in definitions:
-                task = uow.task_runtime.add_task(
-                    plan["id"],
-                    task_key=definition["key"],
-                    task_type=definition["type"],
-                    payload=definition["payload"],
-                    policy=definition["policy"],
-                    priority=definition["priority"],
-                    order_index=definition["order_index"],
-                    max_attempts=definition["max_attempts"],
-                    timeout_seconds=definition["timeout_seconds"],
-                    available_at=definition["available_at"],
-                )
-                by_key[definition["key"]] = task["id"]
-            for definition in definitions:
-                uow.task_runtime.set_task_dependencies(
-                    by_key[definition["key"]],
-                    [
-                        by_key[key]
-                        for key in definition["depends_on"]
-                    ],
-                )
-            if queue:
-                return uow.task_runtime.queue_plan(plan["id"])
-            return uow.task_runtime.get_plan(plan["id"])
+            if existing is None:
+                raise
+            return existing
 
     def get_plan(self, plan_id: str) -> dict[str, Any]:
         with UnitOfWork(self.database) as uow:
@@ -274,6 +296,26 @@ class TaskRuntime:
             return uow.task_runtime.recover_expired(
                 kinds=kinds,
                 now=now,
+            )
+
+    def append_event(
+        self,
+        plan_id: str,
+        event_type: str,
+        *,
+        task_id: str | None = None,
+        attempt_id: str | None = None,
+        payload: dict[str, Any] | None = None,
+        now: float | None = None,
+    ) -> dict[str, Any]:
+        with UnitOfWork(self.database) as uow:
+            return uow.task_runtime.append_event(
+                plan_id,
+                event_type,
+                task_id=task_id,
+                attempt_id=attempt_id,
+                payload=payload,
+                created_at=now,
             )
 
     def events(

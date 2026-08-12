@@ -112,6 +112,37 @@ def test_runtime_releases_dependency_graph_in_order(
     assert events[-1]["event_type"] == "plan.succeeded"
 
 
+def test_runtime_plan_create_is_concurrently_idempotent(
+    app,
+    project,
+):
+    barrier = Barrier(2)
+
+    def create(_worker_id: str):
+        barrier.wait()
+        return _create_plan(
+            app,
+            project["id"],
+            [{"key": "only", "type": "test.only"}],
+            key="concurrent-create",
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        plans = list(pool.map(create, ["a", "b"]))
+
+    assert plans[0]["id"] == plans[1]["id"]
+    runtime = TaskRuntime(app.state.database)
+    stored = runtime.get_plan(plans[0]["id"])
+    assert [task["task_key"] for task in stored["tasks"]] == [
+        "only"
+    ]
+    assert [event["event_type"] for event in runtime.events(stored["id"])] == [
+        "plan.created",
+        "task.created",
+        "plan.queued",
+    ]
+
+
 def test_runtime_claim_is_exclusive_across_workers(
     app,
     project,
