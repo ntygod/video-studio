@@ -67,6 +67,16 @@ class RegenerationPreviewRequest(BaseModel):
     include_downstream: bool = True
 
 
+class RegenerationPlanCreateRequest(RegenerationPreviewRequest):
+    # A browser creates one token per user intent and reuses it for retries.
+    # Omitting it retains the older snapshot-scoped API idempotency behavior.
+    client_token: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+    )
+
+
 class RegenerationStepInputRequest(BaseModel):
     replacements: dict[str, str] = Field(
         min_length=1,
@@ -153,7 +163,7 @@ def preview_project_regeneration(
 )
 def create_regeneration_plan(
     project_id: str,
-    data: RegenerationPreviewRequest,
+    data: RegenerationPlanCreateRequest,
     request: Request,
 ):
     with UnitOfWork(request.app.state.database) as uow:
@@ -164,6 +174,7 @@ def create_regeneration_plan(
             include_downstream=data.include_downstream,
         )
     snapshot = regeneration_preview_snapshot_sha256(preview)
+    intent = data.client_token or snapshot
     execution = get_command_bus(request.app).execute(
         CreateRegenerationPlanCommand(
             project_id=project_id,
@@ -173,7 +184,7 @@ def create_regeneration_plan(
         ),
         _context_with_default_key(
             request,
-            f"regeneration-plan-create:{project_id}:{snapshot}",
+            f"regeneration-plan-create:{project_id}:{intent}",
         ),
     )
     return execution.result
