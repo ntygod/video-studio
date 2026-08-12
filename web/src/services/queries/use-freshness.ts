@@ -17,6 +17,7 @@ import {
     listRegenerationPlans,
     previewRegenerationCascade,
     regenerateArtifact,
+    retryRegenerationPlan,
     setRegenerationPlanStepInput,
     startRegenerationPlan,
     type RegenerationPlan,
@@ -84,8 +85,6 @@ export function useRegenerationPlans(projectId: string) {
         queryFn: () => listRegenerationPlans(projectId),
         enabled: Boolean(projectId),
         staleTime: 5_000,
-        // Draft and blocked plans are stable until a user mutation, which
-        // already invalidates this query. Only running plans need polling.
         refetchInterval: (query) =>
             query.state.data?.some((plan) => plan.status === "running")
                 ? 5_000
@@ -132,8 +131,6 @@ export function useCreateRegenerationPlan(projectId: string) {
                 client_token: input.client_token || tokenRef.current,
             }),
         onSuccess: (plan) => {
-            // A successful create completes this user intent. The next create
-            // gets a new token; failed retries keep using the old token.
             tokenRef.current = newPlanClientToken();
             update(plan);
         },
@@ -144,6 +141,20 @@ export function useStartRegenerationPlan(projectId: string) {
     const update = useUpdatePlanCaches(projectId);
     return useMutation({
         mutationFn: (planId: string) => startRegenerationPlan(planId),
+        onSuccess: update,
+    });
+}
+
+export function useRetryRegenerationPlan(projectId: string) {
+    const update = useUpdatePlanCaches(projectId);
+    return useMutation({
+        mutationFn: ({
+            planId,
+            expectedExecutionAttempt,
+        }: {
+            planId: string;
+            expectedExecutionAttempt: number;
+        }) => retryRegenerationPlan(planId, expectedExecutionAttempt),
         onSuccess: update,
     });
 }

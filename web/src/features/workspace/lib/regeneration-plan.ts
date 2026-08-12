@@ -155,6 +155,35 @@ export function regenerationPlanHasUnresolvedInput(
     );
 }
 
+export function regenerationPlanRetryBlocker(
+    plan?: RegenerationPlan | null,
+): string | null {
+    if (!plan || plan.status !== "failed") {
+        return "只有失败的计划可以重试";
+    }
+    if (plan.execution_attempt >= 20) {
+        return "计划已达到最大重试次数";
+    }
+    const steps = plan.steps || [];
+    if (!steps.some((step) => step.status === "failed")) {
+        return "计划中没有失败步骤";
+    }
+    if (steps.some((step) => step.status === "canceled")) {
+        return "包含已取消步骤，需要重新创建计划";
+    }
+    if (
+        steps.some(
+            (step) =>
+                step.status === "queued" ||
+                step.status === "running" ||
+                step.claimed,
+        )
+    ) {
+        return "仍有子任务或步骤租约尚未结束";
+    }
+    return null;
+}
+
 export function compatibleReplacementAsset(
     snapshot: Partial<Asset>,
     candidate: Asset,

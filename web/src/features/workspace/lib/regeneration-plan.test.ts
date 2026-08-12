@@ -8,6 +8,7 @@ import {
     regenerationActionLabel,
     regenerationPlanHasUnresolvedInput,
     regenerationPlanMeta,
+    regenerationPlanRetryBlocker,
     regenerationStepMeta,
 } from "./regeneration-plan.ts";
 
@@ -85,5 +86,43 @@ test("unresolved structured input prevents starting a draft plan", () => {
             steps: [{ status: "ready" }],
         } as RegenerationPlan),
         false,
+    );
+});
+
+test("failed plans retry only after active work has settled", () => {
+    const failed = {
+        status: "failed",
+        execution_attempt: 0,
+        steps: [
+            {
+                status: "failed",
+                claimed: false,
+            },
+        ],
+    } as RegenerationPlan;
+    assert.equal(regenerationPlanRetryBlocker(failed), null);
+    assert.equal(
+        regenerationPlanRetryBlocker({
+            ...failed,
+            steps: [{ status: "running", claimed: false }],
+        } as RegenerationPlan),
+        "计划中没有失败步骤",
+    );
+    assert.equal(
+        regenerationPlanRetryBlocker({
+            ...failed,
+            steps: [
+                { status: "failed", claimed: false },
+                { status: "queued", claimed: false },
+            ],
+        } as RegenerationPlan),
+        "仍有子任务或步骤租约尚未结束",
+    );
+    assert.equal(
+        regenerationPlanRetryBlocker({
+            ...failed,
+            steps: [{ status: "failed", claimed: true }],
+        } as RegenerationPlan),
+        "仍有子任务或步骤租约尚未结束",
     );
 });

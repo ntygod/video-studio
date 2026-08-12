@@ -157,6 +157,20 @@ export type RegenerationPlanStepStatus =
     | "failed"
     | "canceled";
 
+export type RegenerationPlanStepAttempt = {
+    attempt: number;
+    status: string;
+    job_id: string | null;
+    source_job_id: string | null;
+    input: Record<string, unknown>;
+    result: Record<string, unknown>;
+    blockers: RegenerationPreviewBlocker[];
+    error: string;
+    started_at: number | null;
+    completed_at: number | null;
+    recorded_at: number;
+};
+
 export type RegenerationPlanStep = {
     id: string;
     plan_id: string;
@@ -169,6 +183,8 @@ export type RegenerationPlanStep = {
     expected_version_id: string | null;
     action: RegenerationPreviewAction;
     status: RegenerationPlanStepStatus;
+    execution_attempt: number;
+    attempt_history: RegenerationPlanStepAttempt[];
     can_execute_automatically: boolean;
     depends_on_artifact_ids: string[];
     external_upstream_artifact_ids: string[];
@@ -177,6 +193,10 @@ export type RegenerationPlanStep = {
     direct_missing_asset_ids: string[];
     source_job_id: string | null;
     job_id: string | null;
+    claimed: boolean;
+    claim_owner: string;
+    claim_until: number | null;
+    claim_attempt: number;
     input: {
         replacements?: Record<string, string>;
         [key: string]: unknown;
@@ -195,6 +215,7 @@ export type RegenerationPlanSummary = {
     completed?: number;
     failed?: number;
     canceled?: number;
+    claimed?: number;
     statuses?: Record<string, number>;
     [key: string]: unknown;
 };
@@ -203,6 +224,7 @@ export type RegenerationPlan = {
     id: string;
     project_id: string;
     status: RegenerationPlanStatus;
+    execution_attempt: number;
     root_artifact_ids: string[];
     include_downstream: boolean;
     snapshot_sha256: string;
@@ -283,6 +305,16 @@ export function getRegenerationPlan(planId: string) {
 export function startRegenerationPlan(planId: string) {
     return post<RegenerationPlan>(
         `/api/artifact-regeneration/plans/${seg(planId)}/start`,
+    );
+}
+
+export function retryRegenerationPlan(
+    planId: string,
+    expectedExecutionAttempt: number,
+) {
+    return post<RegenerationPlan>(
+        `/api/artifact-regeneration/plans/${seg(planId)}/retry`,
+        { expected_execution_attempt: expectedExecutionAttempt },
     );
 }
 
