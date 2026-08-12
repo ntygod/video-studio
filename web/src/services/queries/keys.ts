@@ -42,6 +42,8 @@ export const qk = {
         ["active-conversation-turn", projectId, conversationId] as const,
     turnPolicyDecisions: (turnId: string) =>
         ["turn-policy-decisions", turnId] as const,
+    projectPolicyDecisions: (projectId: string, status = "pending") =>
+        ["project-policy-decisions", projectId, status] as const,
 
     assetsRoot: (projectId: string) => ["assets", projectId] as const,
     assets: (projectId: string, unitId?: string | null) => ["assets", projectId, scope(unitId)] as const,

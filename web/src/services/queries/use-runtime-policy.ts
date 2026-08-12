@@ -6,8 +6,10 @@ import {
     approveRuntimePolicyDecision,
     denyRuntimePolicyDecision,
     getActiveConversationTurn,
+    listProjectPolicyDecisions,
     listTurnPolicyDecisions,
     type RuntimePolicyDecision,
+    type RuntimePolicyDecisionStatus,
 } from "@/services/api";
 import { qk } from "./keys";
 
@@ -53,7 +55,24 @@ export function useTurnPolicyDecisions(
     });
 }
 
-export function useResolveRuntimePolicyDecision(turnId: string | null) {
+export function useProjectPolicyDecisions(
+    projectId: string,
+    status: RuntimePolicyDecisionStatus = "pending",
+) {
+    return useQuery({
+        queryKey: qk.projectPolicyDecisions(projectId, status),
+        queryFn: () => listProjectPolicyDecisions(projectId, status),
+        enabled: Boolean(projectId),
+        staleTime: 2_000,
+        refetchInterval: 5_000,
+        refetchOnWindowFocus: true,
+    });
+}
+
+export function useResolveRuntimePolicyDecision(
+    turnId: string | null,
+    projectId?: string | null,
+) {
     const client = useQueryClient();
     return useMutation({
         mutationFn: ({
@@ -69,14 +88,25 @@ export function useResolveRuntimePolicyDecision(turnId: string | null) {
                 ? approveRuntimePolicyDecision(decisionId, note)
                 : denyRuntimePolicyDecision(decisionId, note),
         onSuccess: (decision) => {
-            if (!turnId) return;
-            client.setQueryData<RuntimePolicyDecision[]>(
-                qk.turnPolicyDecisions(turnId),
-                (current = []) =>
-                    current.map((item) =>
-                        item.id === decision.id ? decision : item,
+            const targetTurnId =
+                turnId || String(decision.context.turn_id || "");
+            if (targetTurnId) {
+                client.setQueryData<RuntimePolicyDecision[]>(
+                    qk.turnPolicyDecisions(targetTurnId),
+                    (current = []) =>
+                        current.map((item) =>
+                            item.id === decision.id ? decision : item,
+                        ),
+                );
+            }
+            if (projectId) {
+                client.invalidateQueries({
+                    queryKey: qk.projectPolicyDecisions(
+                        projectId,
+                        "pending",
                     ),
-            );
+                });
+            }
         },
     });
 }

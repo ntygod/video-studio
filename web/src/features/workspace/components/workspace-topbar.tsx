@@ -4,6 +4,7 @@ import { AudioLines, Clapperboard, Compass, FileText, History, Images, LayoutGri
 import Link from "next/link";
 
 import { ThemePreferenceMenu } from "@/features/theme/components/theme-preference-menu";
+import { ApprovalCenter } from "@/features/workspace/components/approval-center";
 import { FreshnessCenter } from "@/features/workspace/components/freshness-center";
 import { useWorkspaceData } from "@/features/workspace/hooks/use-workspace-data";
 import { usePathname } from "next/navigation";
@@ -160,6 +161,7 @@ export function WorkspaceTopbar() {
             </div>
 
             <div className="flex shrink-0 items-center gap-1">
+                <ApprovalCenter projectId={projectId} />
                 <FreshnessCenter projectId={projectId} />
                 <Tooltip title="命令面板（⌘K）">
                     <Button

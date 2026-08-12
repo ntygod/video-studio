@@ -15,6 +15,7 @@ import { useWorkspaceRoute } from "@/features/workspace/hooks/use-workspace-rout
 import { SCRATCH_DRAFT_KEY, useWorkspaceStore } from "@/features/workspace/stores/use-workspace-store";
 import type { Proposal } from "@/services/api";
 import {
+    useActiveConversationTurn,
     useCancelTurn,
     useConversation,
     useConversations,
@@ -49,6 +50,7 @@ export function AgentPanel({ onCollapse }: { onCollapse?: () => void }) {
 
     const conversationsQuery = useConversations(projectId, selectedUnitId);
     const conversationQuery = useConversation(activeId);
+    const activeTurnQuery = useActiveConversationTurn(projectId, activeId);
     const createConversation = useCreateConversation(projectId);
     const deleteConversation = useDeleteConversation(projectId);
     const startTurn = useStartTurn(projectId);
@@ -64,15 +66,24 @@ export function AgentPanel({ onCollapse }: { onCollapse?: () => void }) {
     // 监听待注入数量：结构面板“交给 Agent”后立即取走，而不是等下次切单元。
     const pendingRefsCount = useWorkspaceStore((state) => state.pendingContextRefs.length);
 
-    const stream = useTurnStream(activeId, turnId);
-    const running = stream.status === "running";
+    const effectiveTurnId = turnId || activeTurnQuery.data || null;
+    const stream = useTurnStream(activeId, effectiveTurnId);
+    const running =
+        stream.status === "running" ||
+        Boolean(effectiveTurnId && stream.status === "idle");
+
+    useEffect(() => {
+        if (!turnId && activeTurnQuery.data) {
+            setTurnId(activeTurnQuery.data);
+        }
+    }, [activeTurnQuery.data, turnId]);
 
     // 回合结束后把持久化的助手消息拉进消息流。
     // 流式文本只在 running 期间渲染，这里不刷新的话，上一轮回复会在开下一轮时凭空消失。
     // 同时刷新项目数据：按决策 C，Agent 的追加操作（建稿件/建单元/生成素材）不走提案，
     // 没有别的时机会触发画布更新。
     useEffect(() => {
-        if (!activeId || !turnId) return;
+        if (!activeId || !effectiveTurnId) return;
         if (stream.status === "idle" || stream.status === "running") return;
         queryClient.invalidateQueries({ queryKey: qk.conversation(activeId) });
         queryClient.invalidateQueries({ queryKey: qk.project(projectId) });
@@ -80,7 +91,16 @@ export function AgentPanel({ onCollapse }: { onCollapse?: () => void }) {
         queryClient.invalidateQueries({ queryKey: qk.unitsRoot(projectId) });
         queryClient.invalidateQueries({ queryKey: qk.assetsRoot(projectId) });
         queryClient.invalidateQueries({ queryKey: qk.jobs(projectId) });
-    }, [activeId, projectId, queryClient, stream.status, turnId]);
+        queryClient.invalidateQueries({
+            queryKey: qk.activeConversationTurn(projectId, activeId),
+        });
+    }, [
+        activeId,
+        effectiveTurnId,
+        projectId,
+        queryClient,
+        stream.status,
+    ]);
 
     // T5.3：屏幕阅读器播报当前工具动作；流式正文本身在 MessageList 里已带 aria-live。
     const liveStatus = useMemo(() => {
@@ -298,10 +318,18 @@ export function AgentPanel({ onCollapse }: { onCollapse?: () => void }) {
             </div>
 
             <TurnActions
-                turnId={turnId}
+                turnId={effectiveTurnId}
                 entities={stream.entities}
                 onReverted={() => {
                     setTurnId(null);
+                    if (activeId) {
+                        queryClient.invalidateQueries({
+                            queryKey: qk.activeConversationTurn(
+                                projectId,
+                                activeId,
+                            ),
+                        });
+                    }
                     queryClient.invalidateQueries({ queryKey: qk.conversation(activeId || "") });
                 }}
                 onChanged={refreshProjectData}
@@ -312,7 +340,9 @@ export function AgentPanel({ onCollapse }: { onCollapse?: () => void }) {
                 onChange={(value) => setComposerDraft(draftKey, value)}
                 onSubmit={() => void submit()}
                 onStop={() => {
-                    if (turnId) void cancelTurn.mutateAsync(turnId);
+                    if (effectiveTurnId) {
+                        void cancelTurn.mutateAsync(effectiveTurnId);
+                    }
                 }}
                 pending={running}
                 hasLlm={hasLlm}

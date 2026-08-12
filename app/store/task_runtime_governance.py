@@ -18,6 +18,7 @@ from .runtime_governance_models import (
     RuntimeBudgetLedgerRow,
     RuntimeBudgetTaskUsageRow,
 )
+from .runtime_policy_queries import RuntimePolicyQueryMixin
 from .runtime_policy_repository import RuntimePolicyRepositoryMixin
 from .task_runtime_extensions import (
     AGENT_PLAN_KIND,
@@ -41,6 +42,7 @@ DEFAULT_AGENT_BUDGET: dict[str, Any] = {
 
 
 class GovernedTaskRuntimeRepository(
+    RuntimePolicyQueryMixin,
     RuntimePolicyRepositoryMixin,
     RuntimeBudgetRepositoryMixin,
     RuntimeGovernanceEventMixin,

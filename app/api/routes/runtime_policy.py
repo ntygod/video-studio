@@ -68,6 +68,30 @@ def list_turn_policy_decisions(
         )
 
 
+@router.get("/api/projects/{project_id}/runtime-policy-decisions")
+def list_project_policy_decisions(
+    project_id: str,
+    request: Request,
+    status: str | None = None,
+    kind: str | None = None,
+    limit: int = 100,
+):
+    with UnitOfWork(request.app.state.database) as uow:
+        uow.projects.get(project_id)
+        return uow.task_runtime.list_project_policy_decisions(
+            project_id,
+            status=status,
+            kind=kind,
+            limit=limit,
+        )
+
+
+@router.get("/api/runtime-policy-decisions/{decision_id}")
+def get_runtime_policy_decision(decision_id: str, request: Request):
+    with UnitOfWork(request.app.state.database) as uow:
+        return uow.task_runtime.get_policy_decision(decision_id)
+
+
 @router.get("/api/runtime-plans/{plan_id}/budget")
 def get_runtime_budget(plan_id: str, request: Request):
     with UnitOfWork(request.app.state.database) as uow:

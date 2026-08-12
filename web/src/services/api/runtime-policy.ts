@@ -38,11 +38,18 @@ export type RuntimePolicyDecision = {
 
 export type RuntimePlanSummary = {
     id: string;
+    project_id: string;
     kind: string;
     subject_type: string;
     subject_id: string;
     status: string;
     input: Record<string, unknown>;
+    created_at?: number;
+    updated_at?: number;
+};
+
+export type RuntimeProjectPolicyDecision = RuntimePolicyDecision & {
+    plan: RuntimePlanSummary;
 };
 
 export type RuntimeBudgetState = {
@@ -74,6 +81,18 @@ export function listTurnPolicyDecisions(
     );
 }
 
+export function listProjectPolicyDecisions(
+    projectId: string,
+    status: RuntimePolicyDecisionStatus = "pending",
+    kind = "agent.turn",
+    limit = 100,
+) {
+    return get<RuntimeProjectPolicyDecision[]>(
+        `/api/projects/${seg(projectId)}/runtime-policy-decisions`,
+        { status, kind, limit },
+    );
+}
+
 export function approveRuntimePolicyDecision(
     decisionId: string,
     note = "",
@@ -100,6 +119,19 @@ export function getRuntimeBudget(planId: string) {
     );
 }
 
+export function activeConversationTurnFromPlans(
+    plans: RuntimePlanSummary[],
+    conversationId: string,
+): string | null {
+    const active = plans.find(
+        (plan) =>
+            ["queued", "running"].includes(plan.status) &&
+            plan.subject_type === "agent_turn" &&
+            plan.input.conversation_id === conversationId,
+    );
+    return active?.subject_id || null;
+}
+
 export async function getActiveConversationTurn(
     projectId: string,
     conversationId: string,
@@ -108,11 +140,5 @@ export async function getActiveConversationTurn(
         `/api/projects/${seg(projectId)}/runtime-plans`,
         { kind: "agent.turn", limit: 100 },
     );
-    const active = plans.find(
-        (plan) =>
-            ["queued", "running"].includes(plan.status) &&
-            plan.subject_type === "agent_turn" &&
-            plan.input.conversation_id === conversationId,
-    );
-    return active?.subject_id || null;
+    return activeConversationTurnFromPlans(plans, conversationId);
 }
