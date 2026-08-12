@@ -79,32 +79,39 @@
 
 ### 已完成
 
-- [x] 通过 Alembic 新增版本级 `ArtifactDependency`、`ArtifactProvenance` 和 `ArtifactFreshness`。
-- [x] 派生产物记录精确输入 ArtifactVersion，而不是模糊的 Artifact 当前状态。
+- [x] 通过 Alembic 新增版本级 `ArtifactDependency`、`ArtifactProvenance`、`ArtifactFreshness` 和 `AssetDependency`。
+- [x] 派生产物记录精确 ArtifactVersion 与 Asset 输入；删除 Asset 后保留可解释 tombstone。
 - [x] LLM 生成结果记录 Provider、Model、Prompt version、参数、seed、Attempt 和 Operation。
-- [x] 时间线编译记录实际采用的 edit plan 版本，并在 provenance 参数中记录所用 Asset ID。
-- [x] 上游 Artifact 追加新版本后，当前下游递归传播为 `stale`；无关 Artifact 不受影响。
-- [x] 暴露版本 provenance、Artifact freshness、dependencies 和 impact API。
-- [x] 增加项目级 `/api/projects/{id}/artifact-freshness` 聚合接口，默认只返回需要处理的内容。
-- [x] 工作台顶栏、Artifact 面板和结构树显示 `stale / blocked / needs_review`，结构树提供“需处理”筛选。
-- [x] 工作台可展开查看后续影响，并深链到目标 Artifact 的版本页。
-- [x] 对有完整可重放来源的 `stale` LLM Artifact 提供选择性重新生成：刷新精确输入、保持 Artifact 身份、只追加版本。
-- [x] 重新生成使用目标版本乐观锁与确定性 Job 幂等键；重复请求复用同一 Job，执行恢复不会重复追加版本。
+- [x] Timeline 编译登记实际 edit plan 版本和 clip Asset；缺失素材可通过替换映射追加修复版本。
+- [x] 上游 Artifact 前进后当前下游递归进入 `stale`；Asset / 单元删除后外部下游递归进入 `blocked`。
+- [x] 图登记拒绝自依赖、直接 / 间接环、跨项目输入以及超过安全上限的边。
+- [x] 暴露 provenance、freshness、Artifact / Asset dependencies、dependents 和 impact API。
+- [x] 项目级 Freshness 默认只返回需要处理的内容；工作台顶栏、Artifact 面板和结构树共享状态模型。
+- [x] 工作台可解释原因、查看影响和深链版本；stale / blocked 内容不能直接采用或锁定。
+- [x] 对完整可重放来源的 stale LLM Artifact 提供选择性重新生成，保持 Artifact 身份并只追加版本。
+- [x] 单点重新生成使用目标版本乐观锁和确定性 Job 幂等键；执行恢复不会重复追加版本。
+- [x] Agent `write_artifact` 从工具参数、Turn refs 和 pinned refs 冻结精确输入并登记依赖 / Provenance。
+- [x] Agent 媒体任务冻结精确输入到 Job，并在生成 Asset metadata 中保留审计引用。
+- [x] 提供只读级联预览：沿当前下游扩展、拓扑排序、冻结 expected version、分类动作与 blocker。
 
 ### 下一步
 
-- [ ] 建立一等的 `Asset → ArtifactVersion` 依赖边，以及 Asset 删除后的 `blocked` 递归传播。
-- [ ] 为缺失素材提供替换、解除阻塞和重新编译的显式操作。
+- [ ] 建立持久化 RegenerationPlan / Step，并由可恢复协调器按拓扑释放步骤。
+- [ ] 定义级联执行的部分失败、取消、重新规划和用户替换输入审计。
 - [ ] 定义 `needs_review` 的自动转换条件和人工确认流程。
-- [ ] 支持用户选择多个受影响产物并执行批量 / 级联重新生成。
 - [ ] 为故事结构 → 剧本 → 镜头方案 → 分镜等更多生产链自动登记依赖。
-- [ ] 增加依赖环检测。
-- [ ] 增加图规模限制、数据库级游标遍历和大型项目性能基线。
-- [ ] 在项目库卡片显示项目级状态摘要。
+- [ ] 将生成 Asset 建模为可传播 Freshness 的生产节点，而不只保存 generation metadata。
+- [ ] 增加 500 节点预览和大型项目的数据库遍历性能基线。
+- [ ] 在工作台提供批量选择、素材替换输入和项目库状态摘要。
 
-详细设计与现有限制见 `docs/m3-freshness-and-regeneration.md`。
+详细设计：
 
-**M3 验收状态：** Artifact 版本依赖、`stale` 传播、工作台解释与单个 LLM Artifact 修复闭环已经成立；完整验收仍要求 Asset 阻塞传播、更多生产链依赖、批量修复与图安全边界。
+- `docs/m3-freshness-and-regeneration.md`
+- `docs/agent-explicit-production-inputs.md`
+- `docs/regeneration-cascade-preview.md`
+- `docs/implementation-log-m3-20260812.md`
+
+**M3 验收状态：** 精确输入、Artifact / Asset 图、stale / blocked 传播、单点修复、Agent 输入登记和级联只读预览已经成立；完整级联执行仍依赖持久化计划与可恢复协调器。
 
 ## M4 · Durable Task Runtime 与 Agent 2.0
 

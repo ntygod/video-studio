@@ -9,7 +9,9 @@ import {
 import {
     getArtifactImpact,
     getProjectArtifactFreshness,
+    previewRegenerationCascade,
     regenerateArtifact,
+    type RegenerationPreviewInput,
 } from "@/services/api";
 import { qk } from "@/services/queries/keys";
 
@@ -37,6 +39,15 @@ export function useArtifactImpact(
         queryFn: () => getArtifactImpact(artifactId as string),
         enabled: Boolean(artifactId && enabled),
         staleTime: 10_000,
+    });
+}
+
+export function usePreviewRegenerationCascade(
+    projectId: string,
+) {
+    return useMutation({
+        mutationFn: (input: RegenerationPreviewInput) =>
+            previewRegenerationCascade(projectId, input),
     });
 }
 
