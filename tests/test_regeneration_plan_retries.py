@@ -185,7 +185,7 @@ def test_failed_plan_retry_preserves_history_and_creates_new_job(
     reset = next(
         item for item in retried["steps"] if item["id"] == step["id"]
     )
-    assert reset["status"] == "ready"
+    assert reset["status"] == "waiting_for_predecessors"
     assert reset["execution_attempt"] == 1
     assert reset["job_id"] is None
     assert len(reset["attempt_history"]) == 1
