@@ -25,8 +25,8 @@ class UnitOfWork:
     def __enter__(self):
         # Keep runtime-control ORM registration lazy so pre-Alembic schema
         # fixtures can still model the historical database accurately.
-        from .task_runtime_extensions import (
-            ControlledTaskRuntimeRepository,
+        from .task_runtime_governance import (
+            GovernedTaskRuntimeRepository,
         )
 
         self.session = self.database.session_factory()
@@ -43,7 +43,7 @@ class UnitOfWork:
         self.regeneration_plans = RegenerationPlanRepository(
             self.session
         )
-        self.task_runtime = ControlledTaskRuntimeRepository(self.session)
+        self.task_runtime = GovernedTaskRuntimeRepository(self.session)
         self.artifact_graph = SemanticArtifactGraphRepository(
             self.session
         )

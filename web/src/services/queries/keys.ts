@@ -38,6 +38,10 @@ export const qk = {
     conversationsRoot: (projectId: string) => ["conversations", projectId] as const,
     conversations: (projectId: string, unitId?: string | null) => ["conversations", projectId, scope(unitId)] as const,
     conversation: (conversationId: string) => ["conversation", conversationId] as const,
+    activeConversationTurn: (projectId: string, conversationId: string) =>
+        ["active-conversation-turn", projectId, conversationId] as const,
+    turnPolicyDecisions: (turnId: string) =>
+        ["turn-policy-decisions", turnId] as const,
 
     assetsRoot: (projectId: string) => ["assets", projectId] as const,
     assets: (projectId: string, unitId?: string | null) => ["assets", projectId, scope(unitId)] as const,

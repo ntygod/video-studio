@@ -14,6 +14,7 @@ from . import (
     providers,
     regeneration_replans,
     runtime,
+    runtime_policy,
     timeline,
     voice,
 )
@@ -28,6 +29,7 @@ routers = [
     proposals.router,
     providers.router,
     runtime.router,
+    runtime_policy.router,
     jobs.router,
     operations.router,
     assets.router,
