@@ -53,7 +53,7 @@ def _execute(
     command,
 ):
     step_id = _running_step_id(ctx, tool_name)
-    result = CommandBus(ctx.uow.database).execute(
+    return CommandBus(ctx.uow.database).execute(
         command,
         CommandContext(
             actor_type="agent",
@@ -65,7 +65,38 @@ def _execute(
             ),
         ),
     )
-    return result
+
+
+def _id_list(args: dict[str, Any], key: str) -> list[str]:
+    value = args.get(key) or []
+    if not isinstance(value, list):
+        raise ValueError(f"{key} 必须是数组")
+    if len(value) > 500:
+        raise ValueError(f"{key} 不能超过 500 项")
+    return [
+        normalized
+        for item in value
+        if (normalized := str(item or "").strip())
+    ]
+
+
+def _explicit_input_fields(
+    args: dict[str, Any],
+) -> dict[str, list[str]]:
+    return {
+        "input_version_ids": _id_list(
+            args,
+            "input_version_ids",
+        ),
+        "input_artifact_ids": _id_list(
+            args,
+            "input_artifact_ids",
+        ),
+        "input_asset_ids": _id_list(
+            args,
+            "input_asset_ids",
+        ),
+    }
 
 
 def _write_artifact(
@@ -77,6 +108,7 @@ def _write_artifact(
         raise ValueError(
             "write_artifact 的 payload 必须是 JSON 对象"
         )
+    inputs = _explicit_input_fields(args)
     execution = _execute(
         ctx,
         "write_artifact",
@@ -90,6 +122,22 @@ def _write_artifact(
             ),
             payload=payload,
             source="ai",
+            input_context_turn_id=ctx.turn_id,
+            input_version_ids=inputs["input_version_ids"],
+            input_artifact_ids=inputs["input_artifact_ids"],
+            input_asset_ids=inputs["input_asset_ids"],
+            dependency_type="agent_generated_from",
+            asset_dependency_type=(
+                "agent_generated_with_asset"
+            ),
+            dependency_metadata={
+                "tool_name": "write_artifact",
+                "turn_id": ctx.turn_id,
+            },
+            provenance={
+                "prompt_version": "agent-write-artifact@1",
+                "task_attempt_id": f"agent-turn:{ctx.turn_id}",
+            },
         ),
     )
     artifact = execution.result
@@ -147,6 +195,7 @@ def _generate_media(
     params = args.get("params") or {}
     if not isinstance(params, dict):
         raise ValueError("params 必须是 JSON 对象")
+    inputs = _explicit_input_fields(args)
 
     if kind == "voice":
         payload = {
@@ -166,6 +215,7 @@ def _generate_media(
             "parameters": params,
             "name": params.get("name", f"AI {kind}"),
         }
+    payload.update(inputs)
     payload["_request_id"] = current_request_id()
 
     execution = _execute(
