@@ -2,7 +2,10 @@ import json
 
 from sqlalchemy import create_engine, inspect, text
 
+from app.store import dependency_models  # noqa: F401
 from app.store import models  # noqa: F401
+from app.store import operation_models  # noqa: F401
+from app.store import regeneration_models  # noqa: F401
 from app.store.database import Base, Database
 from app.store.migrations import BASELINE_REVISION, HEAD_REVISION
 
@@ -29,6 +32,7 @@ def test_fresh_database_runs_all_migrations(tmp_path):
             "artifact_versions", "jobs", "operation_logs",
             "artifact_dependencies", "asset_dependencies",
             "artifact_provenance", "artifact_freshness",
+            "regeneration_plans", "regeneration_plan_steps",
             "alembic_version",
         } <= tables
         operation_columns = {
@@ -47,6 +51,25 @@ def test_fresh_database_runs_all_migrations(tmp_path):
             "upstream_asset_snapshot_json",
             "downstream_version_id",
         } <= asset_dependency_columns
+        plan_columns = {
+            item["name"]
+            for item in inspect(database.engine).get_columns(
+                "regeneration_plans"
+            )
+        }
+        assert {
+            "snapshot_sha256", "status", "started_at", "completed_at"
+        } <= plan_columns
+        step_columns = {
+            item["name"]
+            for item in inspect(database.engine).get_columns(
+                "regeneration_plan_steps"
+            )
+        }
+        assert {
+            "expected_version_id", "depends_on_artifact_ids_json",
+            "job_id", "input_json", "result_json",
+        } <= step_columns
     finally:
         database.engine.dispose()
 
@@ -58,6 +81,8 @@ def test_pre_alembic_database_is_stamped_then_upgraded(tmp_path):
     Base.metadata.create_all(legacy_engine)
     with legacy_engine.begin() as connection:
         for table in (
+            "regeneration_plan_steps",
+            "regeneration_plans",
             "asset_dependencies",
             "artifact_freshness",
             "artifact_provenance",
@@ -99,7 +124,8 @@ def test_pre_alembic_database_is_stamped_then_upgraded(tmp_path):
         assert {
             "operation_logs", "artifact_dependencies",
             "asset_dependencies", "artifact_provenance",
-            "artifact_freshness",
+            "artifact_freshness", "regeneration_plans",
+            "regeneration_plan_steps",
         } <= tables
         with database.engine.connect() as connection:
             title = connection.execute(

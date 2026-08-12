@@ -10,7 +10,7 @@ from sqlalchemy import inspect
 from sqlalchemy.engine import Engine
 
 BASELINE_REVISION = "20260811_0001"
-HEAD_REVISION = "20260811_0005"
+HEAD_REVISION = "20260812_0006"
 ROOT_DIR = Path(__file__).resolve().parents[2]
 
 
