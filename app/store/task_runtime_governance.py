@@ -52,7 +52,7 @@ class GovernedTaskRuntimeRepository(
         if str(kind) == AGENT_PLAN_KIND:
             policy = {**DEFAULT_AGENT_POLICY, **deepcopy(policy or {})}
             budget = {**DEFAULT_AGENT_BUDGET, **deepcopy(budget or {})}
-        return super().create_plan(
+        plan = super().create_plan(
             project_id=project_id,
             kind=kind,
             subject_type=subject_type,
@@ -63,6 +63,10 @@ class GovernedTaskRuntimeRepository(
             policy=policy,
             budget=budget,
         )
+        # Plan intent and its zero-value ledger commit together, so read-only
+        # budget observability never has to create execution state.
+        self._ensure_ledger(plan["id"])
+        return plan
 
 
 __all__ = [
