@@ -1,4 +1,5 @@
 import threading
+import time
 
 import httpx
 import pytest
@@ -264,11 +265,12 @@ def test_unknown_request_with_idempotency_reuses_the_same_key(app, project):
 def test_recovery_marks_interrupted_dispatch_unknown(app, project):
     runtime = GovernedTaskRuntime(app.state.database)
     plan = _plan(runtime, project["id"], "provider-recover", max_attempts=2)
+    claimed_at = time.time()
     claim = runtime.claim_next(
         "provider-worker",
         kinds={"test.provider-request"},
         lease_seconds=1,
-        now=100,
+        now=claimed_at,
     )
     assert claim is not None
     with UnitOfWork(app.state.database) as uow:
@@ -282,7 +284,7 @@ def test_recovery_marks_interrupted_dispatch_unknown(app, project):
             provider_snapshot=_snapshot(),
             request_sha256="a" * 64,
             request_summary={"round": 0},
-            now=100,
+            now=claimed_at,
         )
         uow.task_runtime.start_provider_request(
             prepared["id"],
@@ -290,11 +292,11 @@ def test_recovery_marks_interrupted_dispatch_unknown(app, project):
             task_id=claim["task"]["id"],
             attempt_id=claim["attempt"]["id"],
             claim_token=claim["claim_token"],
-            now=100,
+            now=claimed_at,
         )
     recovered = runtime.recover(
         kinds={"test.provider-request"},
-        now=102,
+        now=claimed_at + 2,
     )
     assert recovered >= 2
     with UnitOfWork(app.state.database) as uow:
