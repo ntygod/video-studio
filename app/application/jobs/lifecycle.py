@@ -27,11 +27,13 @@ def reset_job_for_retry(database, job_id: str) -> dict:
                     "耐久任务仍在结束处理中，请刷新后重试"
                 )
         reset = uow.jobs.reset_for_retry(job_id)
-        runtime = attach_runtime_job(uow, reset)
+        attach_runtime_job(uow, reset)
         uow.jobs.add_event(
             job_id,
             "用户已重新发起任务",
             stage="retry",
             progress=0.0,
         )
-        return runtime["job"]
+        # Preserve the public repository contract: lifecycle callers receive
+        # the same full Job shape as GET /api/jobs/{id}, including events.
+        return uow.jobs.get(job_id)
