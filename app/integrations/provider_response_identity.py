@@ -46,12 +46,10 @@ def observe_provider_response(
             )
         row.provider_request_id = request_id
         row.updated_at = now
-        if provider_model_id:
-            summary = dict(row.request_summary_json and {})
-            # The canonical model is already frozen on the request row. The
-            # response model remains available in usage at normal completion.
-            del summary
         uow.session.flush()
+    # The response model is already emitted in normal usage and the request
+    # row freezes the configured model identity. Keep this hook ID-focused.
+    _ = provider_model_id
 
 
 __all__ = ["observe_provider_response"]
