@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import time
+
 from app.integrations.provider_reconciliation import (
     provider_reconciliation_supported,
     query_provider_request,
 )
 from app.store import UnitOfWork
 from app.store.repositories import NotFoundError
+from app.store.runtime_provider_request_models import (
+    RuntimeProviderRequestRow,
+)
 
 
 def observe_unknown_provider_request(database, request_id: str):
@@ -30,6 +35,11 @@ def observe_unknown_provider_request(database, request_id: str):
         provider,
         str(request["provider_request_id"]),
     )
+    with UnitOfWork(database) as uow:
+        row = uow.session.get(RuntimeProviderRequestRow, request_id)
+        if row is not None and row.status == "outcome_unknown":
+            row.updated_at = time.time()
+            uow.session.flush()
     return request, observation, ""
 
 
