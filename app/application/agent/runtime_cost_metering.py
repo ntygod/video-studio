@@ -32,6 +32,15 @@ def _checkpoint_usage(checkpoint: dict[str, Any]) -> dict[str, int]:
     }
 
 
+def _requires_priced_provider(binding) -> bool:
+    policy = binding.context.plan.get("policy") or {}
+    provider_policy = policy.get("provider_cost_policy") or {}
+    return (
+        isinstance(provider_policy, dict)
+        and provider_policy.get("unpriced_provider_mode") == "block"
+    )
+
+
 def _selected_model(provider: dict[str, Any], model_id: str):
     models = list(provider.get("models") or [])
     selected = [
@@ -113,6 +122,27 @@ def _load_provider_and_snapshot(
     return provider, snapshot
 
 
+def _block_unpriced_provider(
+    binding,
+    snapshot: dict[str, Any],
+    *,
+    phase: str,
+    cost_entry_id: str = "",
+) -> None:
+    context = binding.context
+    with UnitOfWork(context.runtime.database) as uow:
+        result = uow.task_runtime.record_unpriced_provider_violation(
+            plan_id=context.plan["id"],
+            task_id=context.task["id"],
+            attempt_id=context.attempt["id"],
+            claim_token=context.claim["claim_token"],
+            phase=phase,
+            provider_snapshot=snapshot,
+            cost_entry_id=cost_entry_id,
+        )
+    raise RuntimeBudgetExceeded(result["violation"])
+
+
 class MeteredLLMAdapter:
     """Transparent Adapter wrapper with exactly-once Provider cost entries."""
 
@@ -143,6 +173,15 @@ class MeteredLLMAdapter:
         violation = state.get("violation")
         if violation:
             raise RuntimeBudgetExceeded(violation)
+        if (
+            _requires_priced_provider(binding)
+            and not self.pricing_snapshot.get("pricing")
+        ):
+            _block_unpriced_provider(
+                binding,
+                self.pricing_snapshot,
+                phase="preflight",
+            )
 
     def _record(self, binding, usage: dict[str, Any]) -> dict[str, Any]:
         context = binding.context
@@ -179,6 +218,16 @@ class MeteredLLMAdapter:
         self.checkpoint["cost_microunits"] = int(
             task_usage.get("cost_microunits") or 0
         )
+        if (
+            _requires_priced_provider(binding)
+            and not result["entry"].get("priced", False)
+        ):
+            _block_unpriced_provider(
+                binding,
+                self.pricing_snapshot,
+                phase="post_usage",
+                cost_entry_id=str(result["entry"]["id"]),
+            )
         violation = (result.get("budget_state") or {}).get("violation")
         if violation:
             raise RuntimeBudgetExceeded(violation)
@@ -203,7 +252,6 @@ class MeteredLLMAdapter:
 
         self._precheck(binding)
         usage: dict[str, Any] = {}
-        done_seen = False
         stream = self.inner.stream(
             messages,
             tools,
@@ -217,7 +265,6 @@ class MeteredLLMAdapter:
                         usage.update(dict(chunk.usage))
                     continue
                 if chunk.kind == "done":
-                    done_seen = True
                     continue
                 yield chunk
         finally:
@@ -252,10 +299,7 @@ class MeteredLLMAdapter:
             }
         )
         yield ChatChunk(kind="usage", usage=yielded_usage)
-        if done_seen:
-            yield ChatChunk(kind="done")
-        else:
-            yield ChatChunk(kind="done")
+        yield ChatChunk(kind="done")
 
 
 def install_agent_cost_metering() -> None:

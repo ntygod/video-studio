@@ -1,6 +1,6 @@
 from pydantic import BaseModel, ConfigDict, Field
 
-from typing import Any
+from typing import Any, Literal
 
 from .bible import ProjectBible
 from .brief import CreativeBrief
@@ -20,12 +20,21 @@ class DeliveryProfile(DomainModel):
     burned_subtitles: bool = False
 
 
+class RuntimeCostPolicy(DomainModel):
+    """Project defaults frozen into each new durable RuntimePlan."""
+
+    unpriced_provider_mode: Literal["allow", "block"] = "allow"
+
+
 class ProjectSettings(DomainModel):
     quality_mode: str = "draft"
     default_language: str = "zh-CN"
     delivery_profiles: list[DeliveryProfile] = Field(default_factory=list)
     provider_overrides: dict[str, str] = Field(default_factory=dict)
     pinned_refs: list[dict[str, str]] = Field(default_factory=list)
+    runtime_cost_policy: RuntimeCostPolicy = Field(
+        default_factory=RuntimeCostPolicy
+    )
 
 
 class CreativeProject(DomainModel):

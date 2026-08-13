@@ -1,15 +1,21 @@
 """Runtime policy decisions, approvals, budget, and cost observability."""
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
+from app.api.command_context import command_context
 from app.application.agent.durable_executor import (
     get_durable_agent_turn_executor,
 )
 from app.application.agent.durable_loop import AGENT_PLAN_KIND
+from app.application.commands import (
+    PatchProjectCommand,
+    get_command_bus,
+)
 from app.application.job_engine import get_job_engine
+from app.domain.project import RuntimeCostPolicy
 from app.store import UnitOfWork
 from app.store.repositories import ConflictError, NotFoundError
 
@@ -18,6 +24,11 @@ router = APIRouter(tags=["runtime-policy"])
 
 class PolicyDecisionResolve(BaseModel):
     note: str = Field(default="", max_length=2000)
+
+
+class ProjectRuntimeCostPolicyUpdate(BaseModel):
+    expected_revision: int = Field(ge=1)
+    unpriced_provider_mode: Literal["allow", "block"]
 
 
 def _turn_plan(uow: UnitOfWork, turn_id: str) -> dict[str, Any]:
@@ -84,6 +95,51 @@ def list_project_policy_decisions(
             kind=kind,
             limit=limit,
         )
+
+
+@router.get("/api/projects/{project_id}/runtime-cost-policy")
+def get_project_runtime_cost_policy(project_id: str, request: Request):
+    with UnitOfWork(request.app.state.database) as uow:
+        project = uow.projects.get(project_id)
+        return {
+            "project_id": project.id,
+            "revision": project.revision,
+            "policy": project.settings.runtime_cost_policy.model_dump(
+                mode="json"
+            ),
+        }
+
+
+@router.patch("/api/projects/{project_id}/runtime-cost-policy")
+def patch_project_runtime_cost_policy(
+    project_id: str,
+    data: ProjectRuntimeCostPolicyUpdate,
+    request: Request,
+):
+    with UnitOfWork(request.app.state.database) as uow:
+        project = uow.projects.get(project_id)
+        settings = project.settings.model_dump(mode="json")
+    policy = RuntimeCostPolicy(
+        unpriced_provider_mode=data.unpriced_provider_mode
+    )
+    settings["runtime_cost_policy"] = policy.model_dump(mode="json")
+    saved = get_command_bus(request.app).execute(
+        PatchProjectCommand(
+            project_id=project_id,
+            patch={"settings": settings},
+            expected_revision=data.expected_revision,
+        ),
+        command_context(request),
+    ).result
+    saved_settings = dict(saved.get("settings") or {})
+    return {
+        "project_id": project_id,
+        "revision": int(saved["revision"]),
+        "policy": dict(
+            saved_settings.get("runtime_cost_policy")
+            or policy.model_dump(mode="json")
+        ),
+    }
 
 
 @router.get("/api/runtime-policy-decisions/{decision_id}")
