@@ -69,7 +69,6 @@ def fake_server():
     thread.join(timeout=3)
 
 
-
 @pytest.fixture()
 def openai_events():
     return [
@@ -145,7 +144,11 @@ def test_openai_token_stream_and_tool_call(fake_server, openai_events):
     assert len(calls) == 1
     assert calls[0].name == "read_unit"
     assert calls[0].arguments == {"unit_id": "u1", "path": "第7章"}
-    assert usage == {"prompt_tokens": 12, "completion_tokens": 34}
+    assert usage is not None
+    assert usage["prompt_tokens"] == 12
+    assert usage["completion_tokens"] == 34
+    assert usage["_provider_request_id"] == ""
+    assert usage["_provider_model_id"] == "fake-model"
     assert done
 
 
