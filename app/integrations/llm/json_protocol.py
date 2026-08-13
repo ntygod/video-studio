@@ -87,7 +87,12 @@ class JsonProtocolAdapter:
             timeout=120,
         )
         response.raise_for_status()
-        content = response.json().get("choices", [{}])[0].get("message", {}).get("content", "")
+        payload = response.json()
+        content = (
+            payload.get("choices", [{}])[0]
+            .get("message", {})
+            .get("content", "")
+        )
         if not str(content).strip():
             raise RuntimeError("LLM returned empty content")
         parsed = extract_json(str(content))
@@ -106,6 +111,14 @@ class JsonProtocolAdapter:
         elif "final" in parsed:
             yield ChatChunk(kind="token", text=str(parsed["final"]))
         else:
-            yield ChatChunk(kind="token", text=json.dumps(parsed, ensure_ascii=False))
-        yield ChatChunk(kind="usage", usage={})
+            yield ChatChunk(
+                kind="token",
+                text=json.dumps(parsed, ensure_ascii=False),
+            )
+        usage = dict(payload.get("usage") or {})
+        usage["_provider_request_id"] = str(payload.get("id") or "")
+        usage["_provider_model_id"] = str(
+            payload.get("model") or self.model
+        )
+        yield ChatChunk(kind="usage", usage=usage)
         yield ChatChunk(kind="done")

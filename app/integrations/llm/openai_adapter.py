@@ -51,6 +51,10 @@ class OpenAIAdapter:
             ]
             payload["tool_choice"] = "auto"
 
+        pending: dict[int, dict[str, str]] = {}
+        final_usage: dict[str, Any] = {}
+        response_id = ""
+        response_model = self.model
         with httpx.stream(
             "POST",
             self.chat_url,
@@ -59,7 +63,6 @@ class OpenAIAdapter:
             timeout=120,
         ) as response:
             response.raise_for_status()
-            pending: dict[int, dict[str, str]] = {}
             for line in response.iter_lines():
                 if not line or not line.startswith("data:"):
                     continue
@@ -70,18 +73,24 @@ class OpenAIAdapter:
                     event = json.loads(data)
                 except json.JSONDecodeError:
                     continue
+                response_id = str(event.get("id") or response_id)
+                response_model = str(
+                    event.get("model") or response_model
+                )
+                if isinstance(event.get("usage"), dict):
+                    final_usage = dict(event["usage"])
                 choices = event.get("choices") or []
                 if not choices:
-                    usage = event.get("usage")
-                    if usage:
-                        yield ChatChunk(kind="usage", usage=usage)
                     continue
-                delta = (choices[0].get("delta") or {})
+                delta = choices[0].get("delta") or {}
                 if delta.get("content"):
                     yield ChatChunk(kind="token", text=delta["content"])
                 for tool_call in delta.get("tool_calls") or []:
                     index = tool_call.get("index", 0)
-                    slot = pending.setdefault(index, {"id": "", "name": "", "arguments": ""})
+                    slot = pending.setdefault(
+                        index,
+                        {"id": "", "name": "", "arguments": ""},
+                    )
                     if tool_call.get("id"):
                         slot["id"] = tool_call["id"]
                     function = tool_call.get("function") or {}
@@ -89,18 +98,22 @@ class OpenAIAdapter:
                         slot["name"] += function["name"]
                     if function.get("arguments"):
                         slot["arguments"] += function["arguments"]
-            for index in sorted(pending):
-                slot = pending[index]
-                try:
-                    arguments = json.loads(slot["arguments"] or "{}")
-                except json.JSONDecodeError:
-                    arguments = {"_raw": slot["arguments"]}
-                yield ChatChunk(
-                    kind="tool_call",
-                    tool_call=ToolCall(
-                        id=slot["id"] or f"call_{index}",
-                        name=slot["name"],
-                        arguments=arguments,
-                    ),
-                )
+
+        for index in sorted(pending):
+            slot = pending[index]
+            try:
+                arguments = json.loads(slot["arguments"] or "{}")
+            except json.JSONDecodeError:
+                arguments = {"_raw": slot["arguments"]}
+            yield ChatChunk(
+                kind="tool_call",
+                tool_call=ToolCall(
+                    id=slot["id"] or f"call_{index}",
+                    name=slot["name"],
+                    arguments=arguments,
+                ),
+            )
+        final_usage["_provider_request_id"] = response_id
+        final_usage["_provider_model_id"] = response_model
+        yield ChatChunk(kind="usage", usage=final_usage)
         yield ChatChunk(kind="done")

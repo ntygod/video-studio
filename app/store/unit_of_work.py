@@ -1,6 +1,7 @@
 from .artifact_repository import SchemaAwareArtifactRepository
 from .asset_repository import SemanticAssetRepository
 from .operation_repository import OperationLogRepository
+from .priced_provider_repository import PricedProviderRepository
 from .regeneration_repository import RegenerationPlanRepository
 from .repositories import (
     AgentTurnRepository,
@@ -8,7 +9,6 @@ from .repositories import (
     JobRepository,
     ProjectRepository,
     ProposalRepository,
-    ProviderRepository,
     SearchRepository,
 )
 from .semantic_graph_repository import (
@@ -25,8 +25,8 @@ class UnitOfWork:
     def __enter__(self):
         # Keep runtime-control ORM registration lazy so pre-Alembic schema
         # fixtures can still model the historical database accurately.
-        from .task_runtime_governance import (
-            GovernedTaskRuntimeRepository,
+        from .costed_task_runtime_repository import (
+            CostedTaskRuntimeRepository,
         )
 
         self.session = self.database.session_factory()
@@ -35,7 +35,7 @@ class UnitOfWork:
         self.conversations = ConversationRepository(self.session)
         self.artifacts = SchemaAwareArtifactRepository(self.session)
         self.proposals = ProposalRepository(self.session)
-        self.providers = ProviderRepository(self.session)
+        self.providers = PricedProviderRepository(self.session)
         self.assets = SemanticAssetRepository(self.session)
         self.jobs = JobRepository(self.session)
         self.agent_turns = AgentTurnRepository(self.session)
@@ -43,7 +43,7 @@ class UnitOfWork:
         self.regeneration_plans = RegenerationPlanRepository(
             self.session
         )
-        self.task_runtime = GovernedTaskRuntimeRepository(self.session)
+        self.task_runtime = CostedTaskRuntimeRepository(self.session)
         self.artifact_graph = SemanticArtifactGraphRepository(
             self.session
         )

@@ -27,7 +27,7 @@ class ChatChunk:
     kind: Literal["token", "tool_call", "usage", "done"]
     text: str = ""
     tool_call: ToolCall | None = None
-    usage: dict[str, int] | None = None
+    usage: dict[str, Any] | None = None
 
 
 class LLMAdapter(Protocol):

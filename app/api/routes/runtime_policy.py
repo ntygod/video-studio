@@ -1,4 +1,4 @@
-"""Runtime policy decisions, approvals, and budget observability."""
+"""Runtime policy decisions, approvals, budget, and cost observability."""
 
 from typing import Any
 
@@ -96,6 +96,37 @@ def get_runtime_policy_decision(decision_id: str, request: Request):
 def get_runtime_budget(plan_id: str, request: Request):
     with UnitOfWork(request.app.state.database) as uow:
         return uow.task_runtime.budget_state(plan_id)
+
+
+@router.get("/api/runtime-plans/{plan_id}/costs")
+def list_runtime_costs(
+    plan_id: str,
+    request: Request,
+    limit: int = 100,
+):
+    with UnitOfWork(request.app.state.database) as uow:
+        return uow.task_runtime.list_cost_entries(plan_id, limit=limit)
+
+
+@router.get("/api/turns/{turn_id}/budget")
+def get_turn_runtime_budget(turn_id: str, request: Request):
+    with UnitOfWork(request.app.state.database) as uow:
+        plan = _turn_plan(uow, turn_id)
+        return uow.task_runtime.budget_state(plan["id"])
+
+
+@router.get("/api/turns/{turn_id}/costs")
+def list_turn_runtime_costs(
+    turn_id: str,
+    request: Request,
+    limit: int = 100,
+):
+    with UnitOfWork(request.app.state.database) as uow:
+        plan = _turn_plan(uow, turn_id)
+        return uow.task_runtime.list_cost_entries(
+            plan["id"],
+            limit=limit,
+        )
 
 
 def _resolve(

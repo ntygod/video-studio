@@ -1,8 +1,9 @@
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
+from app.domain.provider_pricing import normalize_model_pricing
 from app.application.providers import (
     ProviderDiscoveryError,
     discover_provider_models,
@@ -20,7 +21,13 @@ class ModelCreate(BaseModel):
     capability_type: str = ""
     capabilities: dict[str, Any] = Field(default_factory=dict)
     defaults: dict[str, Any] = Field(default_factory=dict)
+    pricing: dict[str, Any] = Field(default_factory=dict)
     is_default: bool = False
+
+    @field_validator("pricing")
+    @classmethod
+    def validate_pricing(cls, value):
+        return normalize_model_pricing(value)
 
 
 class ProviderCreate(BaseModel):
@@ -164,4 +171,3 @@ def test_provider_profile(provider_id: str, request: Request):
 def get_model_capabilities(request: Request):
     with UnitOfWork(request.app.state.database) as uow:
         return model_capabilities(uow)
-

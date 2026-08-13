@@ -4,7 +4,7 @@ from app.store.database import Database
 from app.store.migrations import HEAD_REVISION
 
 
-def test_runtime_governance_migration_installs_policy_and_budget_tables(tmp_path):
+def test_runtime_governance_migration_installs_policy_budget_and_cost_tables(tmp_path):
     database = Database(
         f"sqlite:///{(tmp_path / 'runtime-governance.db').as_posix()}"
     )
@@ -17,12 +17,14 @@ def test_runtime_governance_migration_installs_policy_and_budget_tables(tmp_path
             "runtime_budget_ledgers",
             "runtime_budget_task_usage",
             "runtime_budget_consumptions",
+            "runtime_cost_entries",
+            "model_pricing_profiles",
         } <= tables
         with database.engine.connect() as connection:
             revision = connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
-        assert revision == HEAD_REVISION == "20260812_0013"
+        assert revision == HEAD_REVISION == "20260812_0014"
         decision_columns = {
             item["name"]
             for item in inspector.get_columns(
@@ -47,9 +49,16 @@ def test_runtime_governance_migration_installs_policy_and_budget_tables(tmp_path
                 "runtime_budget_consumptions"
             )
         }
+        cost_unique = {
+            item["name"]
+            for item in inspector.get_unique_constraints(
+                "runtime_cost_entries"
+            )
+        }
         assert "expires_at" in decision_columns
         assert "ix_runtime_policy_pending_expiry" in decision_indexes
         assert "uq_runtime_policy_plan_action" in decision_unique
         assert "uq_runtime_budget_plan_consumption" in consumption_unique
+        assert "uq_runtime_cost_plan_usage" in cost_unique
     finally:
         database.engine.dispose()
