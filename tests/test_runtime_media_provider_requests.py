@@ -101,6 +101,15 @@ def _claim(runtime, worker: str):
     )
 
 
+def _engine(app):
+    return JobEngine(
+        app.state.database,
+        app.state.settings,
+        app.state.media_store,
+        workers=1,
+    )
+
+
 def test_runtime_media_request_records_asset_and_request_fee(
     app,
     project,
@@ -113,12 +122,7 @@ def test_runtime_media_request_records_asset_and_request_fee(
         "app.application.jobs.handlers.media.build_media_provider",
         lambda *_args, **_kwargs: provider,
     )
-    engine = JobEngine(
-        app.state.database,
-        app.state.settings,
-        app.state.media_store,
-        workers=1,
-    )
+    engine = _engine(app)
     runtime = engine._durable_job_engine.runtime
     claim, context = _claim(runtime, "media-worker")
     result = _execute_runtime_job(engine, context)
@@ -161,12 +165,7 @@ def test_media_request_retry_reuses_provider_idempotency_key(
         "app.application.jobs.handlers.media.build_media_provider",
         lambda *_args, **_kwargs: provider,
     )
-    engine = JobEngine(
-        app.state.database,
-        app.state.settings,
-        app.state.media_store,
-        workers=1,
-    )
+    engine = _engine(app)
     runtime = engine._durable_job_engine.runtime
     first, first_context = _claim(runtime, "media-worker-1")
     with pytest.raises(RetryableTaskError) as retryable:
@@ -201,6 +200,92 @@ def test_media_request_retry_reuses_provider_idempotency_key(
     assert request["status"] == "completed"
     assert request["dispatch_count"] == 2
     assert len(costs) == 1
+
+
+def test_non_idempotent_media_network_failure_is_not_retried(
+    app,
+    project,
+    monkeypatch,
+):
+    _provider(app, idempotency_header="")
+    job = _job(app, project["id"], "media-ledger-no-retry")
+    provider = RecoveringMediaProvider(fail_first=True)
+    monkeypatch.setattr(
+        "app.application.jobs.handlers.media.build_media_provider",
+        lambda *_args, **_kwargs: provider,
+    )
+    engine = _engine(app)
+    runtime = engine._durable_job_engine.runtime
+    claim, context = _claim(runtime, "media-worker")
+    with pytest.raises(RuntimeError, match="outcome is unknown"):
+        _execute_runtime_job(engine, context)
+    runtime.fail(
+        claim,
+        error="Provider request outcome is unknown",
+        retryable=False,
+    )
+
+    assert provider.submit_calls == 1
+    with UnitOfWork(app.state.database) as uow:
+        request = uow.task_runtime.list_provider_requests(
+            job["runtime_plan_id"]
+        )[0]
+        saved = uow.jobs.get(job["id"])
+        plan = uow.task_runtime.get_plan(job["runtime_plan_id"])
+    assert request["status"] == "outcome_unknown"
+    assert request["dispatch_count"] == 1
+    assert request["idempotency_supported"] is False
+    assert saved["status"] == "failed"
+    assert plan["status"] == "failed"
+
+
+def test_strict_media_cost_policy_blocks_before_provider_call(
+    app,
+    client,
+    project,
+    monkeypatch,
+):
+    detail = client.get(f"/api/projects/{project['id']}").json()
+    policy = client.patch(
+        f"/api/projects/{project['id']}/runtime-cost-policy",
+        json={
+            "expected_revision": detail["revision"],
+            "unpriced_provider_mode": "block",
+        },
+    )
+    assert policy.status_code == 200, policy.text
+    _provider(app, priced=False)
+    job = _job(app, project["id"], "media-ledger-strict")
+    provider = RecoveringMediaProvider()
+    monkeypatch.setattr(
+        "app.application.jobs.handlers.media.build_media_provider",
+        lambda *_args, **_kwargs: provider,
+    )
+    engine = _engine(app)
+    runtime = engine._durable_job_engine.runtime
+    claim, context = _claim(runtime, "media-worker")
+    with pytest.raises(RuntimeError, match="strict cost policy"):
+        _execute_runtime_job(engine, context)
+    runtime.fail(
+        claim,
+        error="unpriced media Provider",
+        retryable=False,
+    )
+
+    assert provider.submit_calls == 0
+    with UnitOfWork(app.state.database) as uow:
+        requests = uow.task_runtime.list_provider_requests(
+            job["runtime_plan_id"]
+        )
+        costs = uow.task_runtime.list_cost_entries(
+            job["runtime_plan_id"]
+        )
+        saved = uow.jobs.get(job["id"])
+        plan = uow.task_runtime.get_plan(job["runtime_plan_id"])
+    assert requests == []
+    assert costs == []
+    assert saved["status"] == "failed"
+    assert plan["status"] == "failed"
 
 
 def test_media_http_retry_requires_idempotency_header():
