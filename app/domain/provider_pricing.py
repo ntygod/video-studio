@@ -146,11 +146,21 @@ def normalize_llm_usage(value: Any) -> dict[str, Any]:
         )
     )
     cached_tokens = min(cached_tokens, prompt_tokens)
+    usage_reported = any(
+        key in raw
+        for key in (
+            "prompt_tokens",
+            "input_tokens",
+            "completion_tokens",
+            "output_tokens",
+        )
+    )
     return {
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "cached_prompt_tokens": cached_tokens,
         "total_tokens": prompt_tokens + completion_tokens,
+        "usage_reported": usage_reported,
         "provider_request_id": str(
             raw.get("_provider_request_id")
             or raw.get("response_id")
@@ -223,9 +233,20 @@ def price_llm_usage(pricing: Any, usage: Any) -> dict[str, Any]:
         + cached_prompt_cost
         + completion_cost
     )
+    token_pricing = any(
+        key in normalized_pricing
+        for key in (
+            "input_microunits_per_million_tokens",
+            "output_microunits_per_million_tokens",
+            "cached_input_microunits_per_million_tokens",
+        )
+    )
+    fully_priced = bool(normalized_pricing) and (
+        not token_pricing or bool(normalized_usage["usage_reported"])
+    )
     return {
         "currency": "USD",
-        "priced": bool(normalized_pricing),
+        "priced": fully_priced,
         "amount_microunits": amount,
         "pricing": normalized_pricing,
         "pricing_sha256": pricing_sha256(normalized_pricing),

@@ -96,6 +96,11 @@ export function formatModelPricing(
             `输出 $${compactUsd(pricing.output_microunits_per_million_tokens)}/M`,
         );
     }
+    if (pricing.cached_input_microunits_per_million_tokens !== undefined) {
+        parts.push(
+            `缓存 $${compactUsd(pricing.cached_input_microunits_per_million_tokens)}/M`,
+        );
+    }
     if (pricing.request_microunits !== undefined) {
         parts.push(`请求 $${compactUsd(pricing.request_microunits)}`);
     }

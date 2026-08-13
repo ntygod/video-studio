@@ -206,3 +206,36 @@ def test_cost_at_limit_blocks_the_next_provider_call(app, project):
     assert state["violation"]["dimension"] == "max_cost_microunits"
     assert state["violation"]["actual"] == 100
     runtime.fail(claim, error="precheck blocked", retryable=False)
+
+
+def test_unpriced_provider_call_is_audited_without_fake_cost(app, project):
+    runtime = GovernedTaskRuntime(app.state.database)
+    plan = _plan(runtime, project["id"], "unpriced-call")
+    claim = runtime.claim_next("cost-worker", kinds={"test.cost"})
+    assert claim is not None
+    snapshot = {**_snapshot(), "pricing": {}}
+    with UnitOfWork(app.state.database) as uow:
+        recorded = uow.task_runtime.record_provider_usage(
+            plan_id=plan["id"],
+            task_id=claim["task"]["id"],
+            attempt_id=claim["attempt"]["id"],
+            claim_token=claim["claim_token"],
+            usage_key="llm:provider-1:unpriced",
+            source_type="llm",
+            provider_snapshot=snapshot,
+            pricing_snapshot=snapshot,
+            usage={
+                "prompt_tokens": 25,
+                "completion_tokens": 10,
+                "_provider_request_id": "unpriced",
+            },
+        )
+        state = uow.task_runtime.budget_state(plan["id"])
+
+    assert recorded["entry"]["priced"] is False
+    assert recorded["entry"]["amount_microunits"] == 0
+    assert state["usage"]["provider_calls"] == 1
+    assert state["usage"]["priced_calls"] == 0
+    assert state["usage"]["unpriced_calls"] == 1
+    assert state["usage"]["total_tokens"] == 35
+    runtime.fail(claim, error="test complete", retryable=False)

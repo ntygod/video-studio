@@ -1,25 +1,24 @@
 # Runtime Policy、审批与预算治理
 
-> 状态：首个 Agent 高风险动作治理闭环已实现。  
-> 日期：2026-08-12。  
-> Alembic revision：`20260812_0011` 至 `20260812_0013`。
+> 状态：Agent 高风险审批、期限回收、token/tool/wall 与真实 LLM 成本治理闭环已实现。  
+> 日期：2026-08-13。  
+> Alembic revision：`20260812_0011` 至 `20260812_0014`。
 
-## 1. 目标
+## 1. 控制平面
 
-通用 Runtime 不只要保证任务能恢复，还必须回答：
+通用 Runtime 的控制平面由以下持久化事实组成：
 
-1. 一个动作是否允许执行；
-2. 哪些动作需要用户明确确认；
-3. 用户离开页面或服务重启后，确认请求是否仍存在；
-4. token、工具次数和 wall-clock 是否超过预算；
-5. 重试、恢复和并发审批是否会重复消费预算或重复执行副作用；
-6. 长期无人处理的审批是否会永久占用运行容量。
+```text
+Admission Reservation
+PolicyDecision
+Budget Ledger / Task Usage / Consumption
+Provider Cost Entry
+Semantic Event Dedupe
+```
 
-当前实现把这些问题收口到数据库中的 PolicyDecision、Budget Ledger、Admission Reservation 和 RuntimeTask 状态，而不是依赖浏览器或单进程内存。
+它们共同回答动作是否允许、是否需要审批、等待多久、消耗多少，以及恢复或并发是否会重复执行与重复计费。
 
-## 2. 数据模型
-
-### 2.1 RuntimePolicyDecision
+## 2. PolicyDecision
 
 每个逻辑动作最多一条决策：
 
@@ -27,37 +26,15 @@
 UNIQUE(plan_id, action_key)
 ```
 
-保存：
+状态为：
 
-- Plan、Task 和稳定 action key；
-- action type、risk level 与 policy version；
-- `allowed / pending / approved / denied / expired`；
-- 决策上下文；
-- 请求者和决定者；
-- 原因、备注与时间戳；
-- `expires_at`。
+```text
+allowed / pending / approved / denied / expired
+```
 
-恢复时必须使用同一个 action key。若工具名、风险或动作类型改变，系统冲突失败，不重新解释旧动作。
+Decision 保存 Plan、Task、动作、风险、Policy version、上下文、请求者、决定者、原因、备注和 `expires_at`。恢复时工具名或风险发生漂移会冲突失败。
 
-### 2.2 Budget Ledger
-
-预算由三类记录组成：
-
-- `runtime_budget_ledgers`：Plan 聚合值；
-- `runtime_budget_task_usage`：每个 Task 最后一次绝对 Usage 水位；
-- `runtime_budget_consumptions`：工具调用等非 token 消耗的 exactly-once 记录。
-
-Task heartbeat 上报绝对 Usage，Ledger 只累计相对上次水位的正增量。Attempt 恢复或 heartbeat 重放不会重复计费。
-
-### 2.3 Admission 与事件去重
-
-`runtime_admission_reservations` 为活动 Plan 占用数据库 slot。等待审批的 Plan 仍占用 slot，防止调用者制造无限 pending 请求。
-
-`runtime_event_dedupes` 保存结构化事件的语义身份。审批 required/resolved、Step、Entity、Message 和 Done 重放时返回原 Event，而不是追加第二条记录。
-
-## 3. 默认 Agent Policy
-
-当前 Agent Plan 创建时冻结：
+默认 Agent Policy：
 
 ```json
 {
@@ -69,29 +46,17 @@ Task heartbeat 上报绝对 Usage，Ledger 只累计相对上次水位的正增�
 }
 ```
 
-工具风险等级：
+读取与提案为 low，`write_artifact / create_units` 为 medium，`generate_media` 与未知 mutating tool 为 high。
 
-| 工具 | 风险 |
-| --- | --- |
-| 读取、搜索、创建提案 | low |
-| `write_artifact`、`create_units` | medium |
-| `generate_media` | high |
-| 未识别的新 mutating tool | high，保守处理 |
+## 3. 审批状态机
 
-Policy 冻结在 Plan 中。应用默认设置以后改变，不会改写已提交 Plan 的语义。
+高风险动作在副作用前：
 
-## 4. 审批状态机
-
-高风险动作到达副作用边界时：
-
-1. 使用 logical tool call 生成稳定 `action_key`；
-2. 在持有当前 Task claim 时创建或读取 PolicyDecision；
-3. pending 决策写入 `expires_at`；
-4. checkpoint 和 Usage 持久化；
-5. Task 进入 `waiting_approval`；
-6. Attempt 进入 `suspended`；
-7. claim 与 lease 释放；
-8. worker 立即处理其他任务。
+1. 创建或读取稳定 Decision；
+2. 保存 checkpoint 与 usage；
+3. Task 进入 `waiting_approval`；
+4. Attempt 进入 `suspended`；
+5. 释放 claim 与 worker。
 
 批准或拒绝后：
 
@@ -99,107 +64,58 @@ Policy 冻结在 Plan 中。应用默认设置以后改变，不会改写已提�
 waiting_approval → queued → 新 Attempt
 ```
 
-新 Attempt 从原 checkpoint 恢复。批准后动作执行一次；拒绝或过期后读取同一个 Decision，动作不会执行，Agent 工具步骤得到明确失败结果并可继续解释。
+批准后动作执行一次；拒绝或过期后读取同一 Decision，动作不执行。
 
-审批等待不占 worker，但仍占 Plan admission slot。
+审批与 TTL reaper 使用互斥数据库 CAS。截止时间后的 HTTP 请求先提交 expired 与 Task 恢复，再在事务外返回 409，避免异常回滚过期事实。
 
-## 5. 并发与期限
+## 4. Admission 与事件身份
 
-### 5.1 用户审批与过期回收竞争
+`runtime_admission_reservations` 为活动 Plan 分配数据库 slot。Agent 默认容量 10；容量满返回 429，用户消息、Turn、Plan 与 Task 整体回滚。
 
-批准/拒绝使用数据库条件更新：
+等待审批不占 worker但仍占 slot。Plan 终态释放 slot。
 
-```text
-status = pending
-AND (expires_at IS NULL OR expires_at > now)
-```
+`runtime_event_dedupes` 为 Step、Entity、Message、Done、Approval 和 Budget 事件保存语义身份。重放返回原 Event ID 与 seq。
 
-过期回收使用：
+## 5. Budget Ledger
 
-```text
-status = pending
-AND expires_at <= now
-```
+预算数据包括：
 
-只有一个 CAS 可以成功。因此：
+- `runtime_budget_ledgers`：Plan 聚合；
+- `runtime_budget_task_usage`：Task 绝对水位；
+- `runtime_budget_consumptions`：工具调用等 exactly-once 消耗；
+- `runtime_cost_entries`：不可变 Provider 调用费用。
 
-- 截止时间前提交的审批可以获胜；
-- 截止时间后的审批不能覆盖 expired；
-- 两个审批者不能产生两个不同终态；
-- reaper 重复扫描不会重复恢复 Task；
-- `agent.approval.resolved` 只记录一次。
-
-若 HTTP 请求在截止时间后到达，仓储先提交 expired、重新排队 Task 和审计事件；事务提交后 API 返回 409。不能在同一事务内先写 expired 再抛错，否则 UnitOfWork 会回滚过期事实。
-
-### 5.2 TTL
-
-默认：
+支持：
 
 ```text
-24 小时
+max_prompt_tokens
+max_completion_tokens
+max_total_tokens
+max_tool_calls
+max_cost_microunits / max_cost_usd
+max_wall_seconds
 ```
 
-Policy 可设置：
+默认 Agent：120k prompt、60k completion、160k total、12 tool calls、10 USD、900 秒。
 
-```json
-{"approval_ttl_seconds": 3600}
-```
+Token heartbeat 使用绝对水位，只累计正增量。工具调用以稳定 consumption key 计一次。Provider usage 以稳定 usage key 计一次。
 
-运行时限制在 1 秒到 7 天之间。迁移会为历史 Agent Plan 补默认 TTL，并为已有 pending Decision 计算期限。
+## 6. Provider 费用
 
-TaskRuntimeEngine 的 startup recovery 和周期 reaper 都会扫描到期 Decision。到期后 Task 从同一 checkpoint 恢复，无需用户重新打开页面。
+模型价格使用整数微美元持久化，并在第一个真实请求前冻结进 Agent checkpoint。CostEntry 保存 Provider、Model、价格快照、usage、分项和金额；后续改价不重写历史。
 
-## 6. 执行期硬预算
+到达成本上限时，下一次 Provider 调用在发出请求前失败。如果一次响应让成本跨过上限，则真实费用先提交，随后 Turn 失败关闭。
 
-默认 Agent 预算：
-
-```json
-{
-  "max_prompt_tokens": 120000,
-  "max_completion_tokens": 60000,
-  "max_total_tokens": 160000,
-  "max_tool_calls": 12,
-  "max_wall_seconds": 900
-}
-```
-
-支持维度：
-
-- prompt tokens；
-- completion tokens；
-- total tokens；
-- tool calls；
-- cost microunits；
-- wall-clock。
-
-检查发生在：
-
-- claim 前；
-- heartbeat / checkpoint；
-- 工具动作授权和 exactly-once 消耗时。
-
-越界 Usage 会先提交 Ledger 和唯一 `agent.budget.exceeded` 事件，再通过控制信号终止执行。不能通过抛异常让 Usage 一起回滚。
-
-当前 cost ledger 已存在，但真实 Provider 价格表和调用成本换算尚未接入。
+缺少模型价格或 token usage 的调用仍保留审计，并明确计入 `unpriced_calls`。详细契约见 `docs/runtime-cost-metering.md`。
 
 ## 7. 工作台
 
-### 7.1 当前 Turn
-
-AgentPanel 会查询当前 Conversation 对应的活动 `agent.turn` Plan。页面刷新、面板折叠或重新进入项目后，仍会恢复同一个 Turn、SSE、Step 和审批卡片。
-
-### 7.2 项目级审批中心
-
-工作台顶栏显示项目 pending Decision 数量。抽屉一次 joined query 读取 Decision 与 Plan 摘要，避免逐条查询 Plan。
-
-用户可以在任意页面：
-
-- 查看动作、风险、参数摘要和原因；
-- 批准；
-- 拒绝；
-- 看到请求已被其他用户处理或已经过期。
-
-批准/拒绝会刷新 Turn 与项目审批缓存，并唤醒 Agent RuntimeEngine。
+- Agent 当前 Turn 显示审批卡；
+- 项目顶栏提供待审批中心；
+- 页面刷新后恢复 Conversation 的活动 Turn；
+- 模型设置支持 LLM 输入、输出、缓存与单次请求价格；
+- Agent Turn 显示 USD 成本、token、Provider 调用、预算上限与费用明细；
+- 未完整计价与预算超限会明确告警。
 
 ## 8. API
 
@@ -210,44 +126,26 @@ GET  /api/runtime-policy-decisions/{decision_id}
 POST /api/runtime-policy-decisions/{decision_id}/approve
 POST /api/runtime-policy-decisions/{decision_id}/deny
 GET  /api/runtime-plans/{plan_id}/budget
+GET  /api/runtime-plans/{plan_id}/costs
+GET  /api/turns/{turn_id}/budget
+GET  /api/turns/{turn_id}/costs
 ```
 
-项目列表支持 status、kind 和 limit。写入只允许对 pending Decision 进行终态解析；调用者不能直接改 Plan、Task、Attempt 或 Ledger。
+外部调用者不能直接改 Plan、Task、Attempt、Ledger 或 CostEntry。
 
 ## 9. 已验证不变量
 
-自动测试覆盖：
-
-- pending Decision 唯一身份；
-- 高风险动作在批准前不创建 Job 或 Step 副作用；
-- 批准后从 checkpoint 恢复并只执行一次；
-- 重复批准幂等；
-- 拒绝路径；
-- 旧 claim 无法授权；
-- token Usage 重放不重复累计；
-- tool budget exactly-once；
-- wall-clock 在 claim 和 heartbeat 边界生效；
-- 项目级 pending Decision joined query；
-- 页面刷新后的活动 Turn 选择；
-- 到期 Decision 只恢复一次；
-- 截止时间后用户审批不能覆盖 expired；
-- fresh / legacy migration；
-- 后端、前端测试、lint、设计检查与生产构建。
+覆盖 Decision 唯一性、批准前零副作用、批准后单次执行、拒绝/过期、旧 claim 拒绝、Usage 水位、tool exactly-once、wall budget、成本快照、CostEntry exactly-once、成本前置拒绝、跨预算后费用保留、项目审批查询、活动 Turn 恢复、TTL CAS 与迁移。
 
 ## 10. 当前边界
 
-尚未完成：
-
-1. 组织角色、审批权限、多人或双人复核；
-2. Provider 价格表与真实 cost 计量；
-3. 审批委派、批量审批和 SLA 通知；
-4. Planner / Executor / Reviewer / Repair 分层决策；
-5. 通用 RuntimePlan Replan 和 compensation；
-6. token 级持久化流；
-7. PostgreSQL 多实例、网络分区与大规模审批竞争基线。
+- 尚无组织角色、多人或双人复核；
+- 未定价 Provider 不具备严格金额上限；
+- 外部 Provider 请求本身尚无通用 idempotency / 账单对账；
+- 媒体、TTS、渲染和存储成本尚未计量；
+- Planner / Executor / Reviewer / Repair 尚未分层；
+- 通用 Replan、compensation、token 持久流和 PostgreSQL 故障基线尚未完成。
 
 ## 11. 回滚
 
-Decision、Ledger、Consumption、Admission 和 Event 都是执行审计事实。应用回滚不应删除这些表或把 pending 动作直接当作已批准。
-
-若回滚到不识别 `expires_at` 的兼容版本，可保留新增列和索引；后续版本仍能继续回收。数据库 downgrade 会移除期限列，但生产回滚优先保留数据结构。
+Decision、Ledger、CostEntry、Admission、Event、Operation 与业务版本均为审计事实。应用回滚不得删除、重算或把 pending / expired 动作视为已执行。

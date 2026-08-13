@@ -58,6 +58,12 @@ export function RuntimeCostSummary({
                     </Text>
                 ) : null}
             </div>
+            {state.violation ? (
+                <div className="mt-2 flex items-center gap-1.5 text-caption text-[var(--s-danger)]">
+                    <TriangleAlert className="size-3.5" />
+                    已达到预算限制：{state.violation.actual}/{state.violation.limit}
+                </div>
+            ) : null}
             {usage.unpriced_calls ? (
                 <div className="mt-2 flex items-center gap-1.5 text-caption text-[var(--s-warning)]">
                     <TriangleAlert className="size-3.5" />

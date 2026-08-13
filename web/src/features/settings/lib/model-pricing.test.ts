@@ -27,6 +27,10 @@ test("model pricing round-trips between USD form and micro units", () => {
         cachedInputUsdPerMillion: "0.25",
         requestUsd: "0.00001",
     });
+    assert.equal(
+        formatModelPricing(pricing),
+        "输入 $1.25/M · 输出 $5/M · 缓存 $0.25/M · 请求 $0.00001",
+    );
 });
 
 test("empty price form stays explicitly unpriced", () => {

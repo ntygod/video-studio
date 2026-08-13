@@ -1,100 +1,74 @@
-# M4 实施记录 · 2026-08-12
+# M4 实施记录 · 2026-08-13
 
 > 分支：`refactor/kernel-v2-foundation`。  
-> 当前阶段：M4.1 至 M4.5 首个 Agent 生产治理闭环。
+> 当前阶段：M4.1 至 M4.6 Agent 生产治理与成本闭环。
 
-## 1. M4.1 通用运行时
+## M4.1 通用运行时
 
-Alembic `20260812_0010` 新增 RuntimePlan、RuntimeTask、RuntimeTaskAttempt 与 RuntimeTaskEvent。
+`0010` 新增 RuntimePlan、RuntimeTask、RuntimeTaskAttempt 与 RuntimeTaskEvent，完成 DAG、claim、lease、heartbeat、checkpoint、Attempt、timeout、retry、Cancel、恢复和事件续读。
 
-完成 DAG 验证、前驱释放、数据库 claim、lease、heartbeat、checkpoint、Attempt history、timeout、retry backoff、Cancel、事件续读和并发幂等 Plan 创建。
+## M4.2 Agent Turn
 
-`TaskRuntimeEngine` 提供固定 worker、kind 作用域、Handler registry、自动 heartbeat / reaper 和未知任务 fail-closed。
+Turn、消息、Plan 与 Task 原子提交；startup 自动恢复。Agent 冻结 Provider/Model和 tool-loop checkpoint，logical tool call 与 Command 幂等身份跨 Attempt 稳定。RuntimeTaskEvent 驱动 SSE 与终态修复。
 
-## 2. M4.2 Agent Turn
+## M4.3 准入与事件身份
 
-Turn 创建原子提交 user message、AgentTurn、Plan、Task 和 queued 事件。startup 无浏览器参与恢复。
+`0011` 增加数据库 admission slot 与 semantic event dedupe。Agent 容量满时 429 并完整回滚 Turn；重放事件返回原 ID 与 seq。
 
-Agent tool-loop checkpoint 冻结 Provider / Model、messages、phase、round、tool calls、tool index、Usage 和 final message。logical tool call 和 AgentStep 跨 Attempt 稳定，mutating tool 继续使用 CommandBus 幂等键。
+## M4.4 PolicyDecision 与硬预算
 
-RuntimeTaskEvent 驱动结构化 SSE；live token 不推进持久游标；终态事实提交后缺失事件可自动补齐。
+`0012` 增加 PolicyDecision、Budget Ledger、Task Usage 水位与 exactly-once Consumption。高风险工具副作用前 suspend，批准/拒绝后从 checkpoint 恢复。token、tool 与 wall-clock 预算进入执行状态机。
 
-## 3. M4.3 准入与事件身份
+## M4.5 审批工作台与 TTL
 
-Alembic `20260812_0011` 新增：
+项目级审批中心、当前 Turn 审批卡与刷新恢复完成。`0013` 增加 `expires_at`，startup / reaper 回收无人处理审批；用户审批与过期通过 CAS 决定唯一终态。
 
-- runtime admission bucket；
-- Plan slot reservation；
-- semantic event dedupe。
+## M4.6 Provider 价格与成本
 
-Agent 默认容量 10。容量满返回 429，Turn 创建事务完整回滚。Plan 终态释放 slot。
+`0014` 新增：
 
-结构化 Agent 事件按稳定语义 key 去重，浏览器持久游标只向前推进。
+- `model_pricing_profiles`；
+- `runtime_cost_entries`；
+- Agent 默认 10 USD 成本预算。
 
-## 4. M4.4 PolicyDecision 与预算
+LLM 模型价格规范化为整数微美元。Agent 在真实请求前把 Provider、Model 与价格冻结进 checkpoint。OpenAI streaming 与 JSON protocol Adapter 传递 usage、response ID 和实际 model ID。
 
-Alembic `20260812_0012` 新增 PolicyDecision、Budget Ledger、Task Usage 水位和 exactly-once Consumption。
+每个 usage 生成不可变 CostEntry，并在同一事务中推进 Task 水位和 Plan Ledger。稳定 `usage_key` 防止重复计费；改价不改变历史快照。
 
-高风险工具在副作用之前请求确认。Task 进入 waiting approval，Attempt suspended，checkpoint 持久化并释放 worker。批准或拒绝后新 Attempt 从原 checkpoint 恢复。
+到达上限时下一次请求前拒绝；响应跨预算时先保存真实费用，再失败关闭。缺少价格或 usage 的调用保留审计并标记未完整计价。
 
-默认 Agent 预算为 120k prompt、60k completion、160k total、12 次工具调用和 900 秒。预算在 claim、heartbeat / checkpoint 与工具授权边界执行。
+工作台新增：
 
-## 5. M4.5 审批工作台、刷新恢复与 TTL
+- 模型输入/输出/缓存/请求价格编辑；
+- 渠道价格覆盖提示；
+- 模型能力价格列；
+- Agent Turn USD、token、调用次数和上限；
+- 未定价与超限告警；
+- 费用明细。
 
-工作台新增项目级审批中心：
+## 自动验收
 
-- 顶栏显示 pending 数量；
-- joined query 返回 Decision 与 Plan 摘要；
-- 任意页面可批准或拒绝；
-- mutation 刷新项目和 Turn 缓存并唤醒 worker。
+新增或扩展覆盖：
 
-AgentPanel 使用持久化 RuntimePlan 恢复当前 Conversation 的活动 Turn。页面刷新不再丢失 pending 审批入口。
+- Decimal 价格规范化与 cached token 计算；
+- 缺少 usage 不伪装完整计价；
+- Provider 价格 API；
+- 价格快照跨改价稳定；
+- CostEntry exactly-once；
+- Ledger token/cost 去重；
+- 未定价调用审计；
+- 请求前成本门限；
+- 请求后跨预算费用不回滚；
+- `0014` 迁移与唯一约束；
+- 前端 USD ↔ 微单位往返和 UI 类型语法检查。
 
-Alembic `20260812_0013` 为 Decision 增加 `expires_at` 与 pending-expiry 索引。默认 TTL 为 24 小时，可由冻结 Plan Policy 覆盖，范围 1 秒至 7 天。
+## 当前边界
 
-过期回收接入 startup / periodic recovery：
+- 外部 Provider 请求尚无通用 idempotency 与账单对账；
+- 媒体/TTS/渲染/存储成本尚未计量；
+- 未定价调用只告警，不构成严格金额上限；
+- 角色审批、Planner/Reviewer、通用 Replan/compensation、token 持久流和 PostgreSQL 故障基线尚未完成。
 
-```text
-pending + expires_at <= now
-→ expired
-→ waiting Task queued
-→ 同一 checkpoint 恢复
-```
+## 回滚
 
-用户审批与 reaper 使用互斥 CAS。截止时间后的 HTTP 审批先提交 expired 事实，再在事务外返回 409，避免异常回滚过期状态。
-
-## 6. 自动验收
-
-覆盖：
-
-- DAG、claim、lease、timeout、retry、Cancel；
-- startup recovery；
-- logical tool exactly-once；
-- Agent checkpoint 和冻结 Model；
-- SSE 重放与事件去重；
-- admission 并发与 429 原子回滚；
-- Policy pending / approve / deny；
-- 高风险动作批准前零副作用，批准后执行一次；
-- stale claim 授权拒绝；
-- token / tool / wall budget；
-- Usage 重放不重复累计；
-- 项目级审批查询；
-- 刷新后的活动 Turn 选择；
-- TTL 到期只恢复一次；
-- 截止时间后审批不能覆盖 expired；
-- fresh / legacy migration；
-- 后端、前端测试、lint、设计检查与生产构建。
-
-## 7. 当前边界
-
-- Planner / Executor / Reviewer / Repair 尚未分层；
-- Provider 价格表与真实 cost 换算未接入；
-- 尚无角色权限、多人审批或双人复核；
-- 通用 Replan 与 compensation 未实现；
-- token 级输出不持久；
-- PostgreSQL 多进程与系统性故障注入基线仍待建立；
-- RegenerationPlan 暂不迁入，避免双写。
-
-## 8. 回滚
-
-所有 Runtime、Decision、Budget、Admission、Event、AgentTurn、Operation 和业务实体记录均为审计事实。回滚应用代码时保留表和历史；不要通过删除 Plan、Decision 或 ArtifactVersion 伪装动作从未发生。
+价格配置可以回滚，CostEntry、Ledger、Decision、Event、Operation 与业务版本是历史事实，不应删除或重算。

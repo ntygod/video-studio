@@ -40,6 +40,22 @@ def test_pricing_normalizes_usd_aliases_and_cached_tokens():
     assert result["amount_microunits"] == 1_360
 
 
+def test_token_pricing_without_provider_usage_is_marked_incomplete():
+    result = price_llm_usage(
+        {
+            "input_usd_per_million_tokens": 1,
+            "output_usd_per_million_tokens": 2,
+            "request_usd": 0.001,
+        },
+        {"_provider_request_id": "missing-usage"},
+    )
+    assert result["priced"] is False
+    # The known request fee is retained, while the call remains explicitly
+    # incomplete because token usage was not reported.
+    assert result["amount_microunits"] == 1_000
+    assert result["usage"]["usage_reported"] is False
+
+
 def test_provider_api_persists_canonical_model_pricing(client):
     response = client.post(
         "/api/provider-profiles",
@@ -88,3 +104,75 @@ def test_provider_api_persists_canonical_model_pricing(client):
         },
     )
     assert invalid.status_code == 422
+
+
+def test_agent_pricing_snapshot_survives_later_provider_price_change(
+    app,
+    client,
+):
+    from app.application.agent.runtime_cost_metering import (
+        _load_provider_and_snapshot,
+    )
+
+    created = client.post(
+        "/api/provider-profiles",
+        json={
+            "name": "Frozen price",
+            "capability_type": "llm",
+            "adapter": "openai",
+            "base_url": "https://example.invalid/v1",
+            "models": [
+                {
+                    "name": "Frozen",
+                    "model_id": "frozen-model",
+                    "capability_type": "llm",
+                    "pricing": {
+                        "input_usd_per_million_tokens": 1,
+                        "output_usd_per_million_tokens": 2,
+                    },
+                }
+            ],
+        },
+    )
+    assert created.status_code == 201, created.text
+    provider = created.json()
+    checkpoint = {
+        "provider_id": provider["id"],
+        "model_id": "frozen-model",
+        "round": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+    }
+    _provider, first = _load_provider_and_snapshot(
+        app.state.database,
+        checkpoint,
+    )
+    assert first["pricing"][
+        "input_microunits_per_million_tokens"
+    ] == 1_000_000
+
+    patched = client.patch(
+        f"/api/provider-profiles/{provider['id']}",
+        json={
+            "models": [
+                {
+                    "name": "Frozen",
+                    "model_id": "frozen-model",
+                    "capability_type": "llm",
+                    "pricing": {
+                        "input_usd_per_million_tokens": 9,
+                        "output_usd_per_million_tokens": 10,
+                    },
+                }
+            ]
+        },
+    )
+    assert patched.status_code == 200, patched.text
+    _provider, restored = _load_provider_and_snapshot(
+        app.state.database,
+        checkpoint,
+    )
+    assert restored == first
+    assert restored["pricing"][
+        "input_microunits_per_million_tokens"
+    ] == 1_000_000

@@ -107,6 +107,7 @@ export type RuntimeCostEntry = {
         completion_tokens: number;
         cached_prompt_tokens: number;
         total_tokens: number;
+        usage_reported: boolean;
         provider_request_id: string;
         provider_model_id: string;
         [key: string]: unknown;
