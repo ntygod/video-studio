@@ -1,6 +1,9 @@
 import httpx
 import pytest
 
+import app.application.reconciled_task_runtime as reconciled_module
+from app.application.reconciled_task_runtime import ReconciledTaskRuntime
+from app.application.runtime_governance import GovernedTaskRuntime
 from app.integrations.provider_reconciliation import (
     ProviderReconciliationConfigurationError,
     provider_reconciliation_url,
@@ -75,3 +78,52 @@ def test_provider_status_query_keeps_pending_nonterminal(monkeypatch):
     result = query_provider_request(_provider(), "external-2")
     assert result.state == "pending"
     assert result.status_value == "running"
+
+
+def test_reconciled_runtime_runs_bounded_candidate_batch(monkeypatch):
+    observed = {}
+
+    class FakeRepository:
+        def list_reconcilable_provider_request_ids(self, *, kinds, limit):
+            observed["kinds"] = kinds
+            observed["limit"] = limit
+            return ["request-1"]
+
+    class FakeUow:
+        task_runtime = FakeRepository()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    monkeypatch.setattr(
+        GovernedTaskRuntime,
+        "recover",
+        lambda self, *, kinds=None, now=None: 2,
+    )
+    monkeypatch.setattr(
+        reconciled_module,
+        "UnitOfWork",
+        lambda _database: FakeUow(),
+    )
+
+    def fake_reconcile(database, request_ids):
+        observed["database"] = database
+        observed["request_ids"] = request_ids
+        return 1
+
+    monkeypatch.setattr(
+        reconciled_module,
+        "reconcile_provider_requests",
+        fake_reconcile,
+    )
+    runtime = ReconciledTaskRuntime("database")
+    assert runtime.recover(kinds={"agent.turn"}, now=10) == 3
+    assert observed == {
+        "kinds": {"agent.turn"},
+        "limit": 50,
+        "database": "database",
+        "request_ids": ["request-1"],
+    }
