@@ -8,6 +8,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.application.jobs.runtime_contract import attach_runtime_job
 from app.store import UnitOfWork
 from app.store.repositories import NotFoundError
 
@@ -132,6 +133,7 @@ class CreateBatchJobsCommand:
             }
         )
         children: list[dict[str, Any]] = []
+        runtime_entities: list[dict[str, str]] = []
         style_direction = project.bible.style.visual_direction
         for unit_id in self.unit_ids:
             unit = units[unit_id]
@@ -155,6 +157,21 @@ class CreateBatchJobsCommand:
                     },
                 }
             )
+            runtime = attach_runtime_job(uow, child)
+            child = runtime["job"]
+            if runtime["plan"] is not None:
+                runtime_entities.extend(
+                    [
+                        {
+                            "type": "runtime_plan",
+                            "id": runtime["plan"]["id"],
+                        },
+                        {
+                            "type": "runtime_task",
+                            "id": runtime["task"]["id"],
+                        },
+                    ]
+                )
             children.append(child)
         uow.jobs.update_payload(
             parent["id"],
@@ -181,6 +198,7 @@ class CreateBatchJobsCommand:
                     {"type": "job", "id": child["id"]}
                     for child in children
                 ],
+                *runtime_entities,
             ],
             inverse_operation=None,
         )

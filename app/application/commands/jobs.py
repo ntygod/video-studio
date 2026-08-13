@@ -11,6 +11,7 @@ from typing import Any
 from app.application.explicit_inputs import (
     resolve_explicit_job_inputs,
 )
+from app.application.jobs.runtime_contract import attach_runtime_job
 from app.store import UnitOfWork
 from app.store.repositories import NotFoundError
 
@@ -153,12 +154,26 @@ class CreateJobCommand:
                 "turn_id": self.turn_id,
             }
         )
+        runtime = attach_runtime_job(uow, job)
+        job = runtime["job"]
+        affected = [{"type": "job", "id": job["id"]}]
+        if runtime["plan"] is not None:
+            affected.extend(
+                [
+                    {
+                        "type": "runtime_plan",
+                        "id": runtime["plan"]["id"],
+                    },
+                    {
+                        "type": "runtime_task",
+                        "id": runtime["task"]["id"],
+                    },
+                ]
+            )
         return OperationExecution(
             result=job,
             audit_result={"job_id": job["id"]},
-            affected_entities=[
-                {"type": "job", "id": job["id"]}
-            ],
+            affected_entities=affected,
             inverse_operation={
                 "type": "job.cancel",
                 "job_id": job["id"],

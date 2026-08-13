@@ -1,4 +1,4 @@
-"""DB 队列认领与 lease。"""
+"""DB queue claim and lease for legacy, non-Runtime Jobs."""
 
 import time
 
@@ -6,21 +6,24 @@ from sqlalchemy import text
 
 from app.store import UnitOfWork
 
-#: 认领后 lease 的有效期。worker 必须在到期前续约，否则会被 recover 判定为掉线。
 LEASE_SECONDS = 60
 
 
 def claim(database, worker_id: str, lease_seconds: int = LEASE_SECONDS):
-    """原子认领一个 queued 任务：置 running、登记 worker 与 lease、attempt+1。
+    """Atomically claim one legacy queued Job.
 
-    两个 worker 并发认领同一任务时，UPDATE 的 rowcount=0 的一方返回 None。
+    Jobs linked to a RuntimePlan are deliberately invisible here. Their lease,
+    attempts, timeout, and recovery are owned exclusively by RuntimeTask.
     """
+
     now = time.time()
     with database.engine.begin() as conn:
         row = conn.execute(
             text(
                 "SELECT id FROM jobs "
-                "WHERE status='queued' AND (lease_until IS NULL OR lease_until <= :now) "
+                "WHERE status='queued' "
+                "AND runtime_plan_id IS NULL "
+                "AND (lease_until IS NULL OR lease_until <= :now) "
                 "ORDER BY created_at LIMIT 1"
             ),
             {"now": now},
@@ -30,9 +33,10 @@ def claim(database, worker_id: str, lease_seconds: int = LEASE_SECONDS):
         job_id = row[0]
         result = conn.execute(
             text(
-                "UPDATE jobs SET status='running', worker_id=:wid, lease_until=:until, "
-                "updated_at=:now, attempt=attempt+1 "
-                "WHERE id=:id AND status='queued'"
+                "UPDATE jobs SET status='running', worker_id=:wid, "
+                "lease_until=:until, updated_at=:now, attempt=attempt+1 "
+                "WHERE id=:id AND status='queued' "
+                "AND runtime_plan_id IS NULL"
             ),
             {
                 "wid": worker_id,
@@ -48,22 +52,25 @@ def claim(database, worker_id: str, lease_seconds: int = LEASE_SECONDS):
 
 
 def renew(database, job_ids: list[str], lease_seconds: int = LEASE_SECONDS) -> int:
-    """为仍在运行的任务续约 lease。
+    """Renew leases for still-running legacy Jobs."""
 
-    没有续约的话，任何耗时超过 LEASE_SECONDS 的任务（视频生成、渲染都轻易超过）
-    都会被 recover 打回 queued，然后被另一个 worker 重复认领——两个 worker 同时
-    跑同一个任务，产出重复素材。
-    """
     if not job_ids:
         return 0
-    placeholders = ", ".join(f":id{index}" for index in range(len(job_ids)))
-    params: dict[str, object] = {f"id{index}": job_id for index, job_id in enumerate(job_ids)}
+    placeholders = ", ".join(
+        f":id{index}" for index in range(len(job_ids))
+    )
+    params: dict[str, object] = {
+        f"id{index}": job_id
+        for index, job_id in enumerate(job_ids)
+    }
     params["until"] = time.time() + lease_seconds
     with database.engine.begin() as conn:
         result = conn.execute(
             text(
                 f"UPDATE jobs SET lease_until=:until "
-                f"WHERE status='running' AND id IN ({placeholders})"
+                f"WHERE status='running' "
+                f"AND runtime_plan_id IS NULL "
+                f"AND id IN ({placeholders})"
             ),
             params,
         )
@@ -71,13 +78,17 @@ def renew(database, job_ids: list[str], lease_seconds: int = LEASE_SECONDS) -> i
 
 
 def recover(database) -> int:
-    """把 lease 过期的 running 任务打回 queued（进程崩溃/杀服务后恢复）。"""
+    """Return only expired legacy Jobs to the old queue."""
+
     now = time.time()
     with database.engine.begin() as conn:
         result = conn.execute(
             text(
-                "UPDATE jobs SET status='queued', worker_id='', lease_until=NULL "
-                "WHERE status='running' AND lease_until < :now"
+                "UPDATE jobs SET status='queued', worker_id='', "
+                "lease_until=NULL "
+                "WHERE status='running' "
+                "AND runtime_plan_id IS NULL "
+                "AND lease_until < :now"
             ),
             {"now": now},
         )
@@ -85,9 +96,11 @@ def recover(database) -> int:
 
 
 def mark_backoff(database, job_id: str, seconds: float) -> None:
-    """把重试任务的 lease_until 设为 now+seconds，claim 会等到退避结束再认领。"""
     with database.engine.begin() as conn:
         conn.execute(
-            text("UPDATE jobs SET lease_until=:until WHERE id=:id"),
+            text(
+                "UPDATE jobs SET lease_until=:until "
+                "WHERE id=:id AND runtime_plan_id IS NULL"
+            ),
             {"until": time.time() + seconds, "id": job_id},
         )
