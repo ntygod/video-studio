@@ -67,7 +67,7 @@ export function RuntimeCostSummary({
             {usage.unpriced_calls ? (
                 <div className="mt-2 flex items-center gap-1.5 text-caption text-[var(--s-warning)]">
                     <TriangleAlert className="size-3.5" />
-                    {usage.unpriced_calls} 次调用缺少模型价格，当前合计不含这些费用
+                    {usage.unpriced_calls} 次调用缺少价格或 usage，当前合计可能不完整
                 </div>
             ) : null}
             {entries.length ? (
@@ -87,7 +87,7 @@ export function RuntimeCostSummary({
                                 <span className="shrink-0 font-mono text-[var(--s-faint)]">
                                     {entry.priced
                                         ? formatUsd(entry.amount_usd)
-                                        : "未定价"}
+                                        : "未完整计价"}
                                 </span>
                             </div>
                         ))}

@@ -239,3 +239,14 @@ def test_unpriced_provider_call_is_audited_without_fake_cost(app, project):
     assert state["usage"]["unpriced_calls"] == 1
     assert state["usage"]["total_tokens"] == 35
     runtime.fail(claim, error="test complete", retryable=False)
+
+
+def test_negative_cost_budget_is_rejected(app, project):
+    runtime = GovernedTaskRuntime(app.state.database)
+    with pytest.raises(ValueError, match="max_cost_microunits"):
+        _plan(
+            runtime,
+            project["id"],
+            "negative-cost-budget",
+            max_cost=-1,
+        )

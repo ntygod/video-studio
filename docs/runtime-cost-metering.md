@@ -102,7 +102,7 @@ checkpoint 提交后才创建外部 HTTP 请求。后续 Attempt 会继续使用
 
 ## 5. Usage 与计算
 
-OpenAI streaming Adapter 请求 `include_usage`，在流结束时发出 Provider response ID、实际 model ID 和 usage。JSON protocol Adapter从非流式响应读取同样字段。
+OpenAI streaming Adapter 请求 `include_usage`，在流结束时发出 Provider response ID、实际 model ID 和 usage。若兼容网关以 400/422 拒绝 `stream_options`，Adapter 会在尚未生成内容时降级重试一次，不破坏已有渠道。JSON protocol Adapter 从非流式响应读取同样字段。
 
 费用使用 Decimal half-up 规则：
 

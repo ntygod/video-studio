@@ -5,7 +5,10 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-from app.domain.provider_pricing import usd_to_microunits
+from app.domain.provider_pricing import (
+    normalize_microunits,
+    usd_to_microunits,
+)
 
 from .runtime_cost_repository import RuntimeCostRepositoryMixin
 from .task_runtime_extensions import AGENT_PLAN_KIND
@@ -34,6 +37,13 @@ class CostedTaskRuntimeRepository(
         budget: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         normalized_budget = deepcopy(budget or {})
+        if normalized_budget.get("max_cost_microunits") is not None:
+            normalized_budget["max_cost_microunits"] = (
+                normalize_microunits(
+                    normalized_budget["max_cost_microunits"],
+                    field="max_cost_microunits",
+                )
+            )
         if (
             normalized_budget.get("max_cost_microunits") is None
             and normalized_budget.get("max_cost_usd") is not None

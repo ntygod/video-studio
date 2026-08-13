@@ -52,6 +52,14 @@ def _nonnegative_int(value: Any, *, field: str) -> int:
     return int(integral)
 
 
+def normalize_microunits(
+    value: Any,
+    *,
+    field: str = "microunits",
+) -> int:
+    return _nonnegative_int(value, field=field)
+
+
 def usd_to_microunits(value: Any, *, field: str = "usd") -> int:
     if isinstance(value, bool):
         raise ValueError(f"{field} must be a non-negative number")
@@ -275,6 +283,7 @@ __all__ = [
     "MICROUNITS_PER_USD",
     "TOKENS_PER_RATE_UNIT",
     "microunits_to_usd",
+    "normalize_microunits",
     "normalize_llm_usage",
     "normalize_model_pricing",
     "price_llm_usage",

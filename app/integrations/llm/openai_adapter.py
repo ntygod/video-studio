@@ -21,6 +21,10 @@ class OpenAIAdapter:
         self.model = model_id or models[0]["model_id"]
         self.chat_url = provider_endpoint(provider, "chat/completions", "chat_path")
         self.headers = provider_headers(provider)
+        settings = provider.get("settings") or {}
+        self.include_stream_usage = bool(
+            settings.get("stream_include_usage", True)
+        )
 
     def stream(
         self,
@@ -35,8 +39,9 @@ class OpenAIAdapter:
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": True,
-            "stream_options": {"include_usage": True},
         }
+        if self.include_stream_usage:
+            payload["stream_options"] = {"include_usage": True}
         if tools:
             payload["tools"] = [
                 {
@@ -55,49 +60,69 @@ class OpenAIAdapter:
         final_usage: dict[str, Any] = {}
         response_id = ""
         response_model = self.model
-        with httpx.stream(
-            "POST",
-            self.chat_url,
-            headers=self.headers,
-            json=payload,
-            timeout=120,
-        ) as response:
-            response.raise_for_status()
-            for line in response.iter_lines():
-                if not line or not line.startswith("data:"):
+        request_payload = payload
+        retried_without_usage = False
+        while True:
+            with httpx.stream(
+                "POST",
+                self.chat_url,
+                headers=self.headers,
+                json=request_payload,
+                timeout=120,
+            ) as response:
+                if (
+                    response.status_code in {400, 422}
+                    and "stream_options" in request_payload
+                    and not retried_without_usage
+                ):
+                    # Some OpenAI-compatible gateways reject stream_options.
+                    # A validation response contains no generated tokens, so
+                    # one compatibility retry does not replay a completed call.
+                    request_payload = dict(request_payload)
+                    request_payload.pop("stream_options", None)
+                    retried_without_usage = True
                     continue
-                data = line[5:].strip()
-                if data == "[DONE]":
-                    break
-                try:
-                    event = json.loads(data)
-                except json.JSONDecodeError:
-                    continue
-                response_id = str(event.get("id") or response_id)
-                response_model = str(
-                    event.get("model") or response_model
-                )
-                if isinstance(event.get("usage"), dict):
-                    final_usage = dict(event["usage"])
-                choices = event.get("choices") or []
-                if not choices:
-                    continue
-                delta = choices[0].get("delta") or {}
-                if delta.get("content"):
-                    yield ChatChunk(kind="token", text=delta["content"])
-                for tool_call in delta.get("tool_calls") or []:
-                    index = tool_call.get("index", 0)
-                    slot = pending.setdefault(
-                        index,
-                        {"id": "", "name": "", "arguments": ""},
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == "[DONE]":
+                        break
+                    try:
+                        event = json.loads(data)
+                    except json.JSONDecodeError:
+                        continue
+                    response_id = str(event.get("id") or response_id)
+                    response_model = str(
+                        event.get("model") or response_model
                     )
-                    if tool_call.get("id"):
-                        slot["id"] = tool_call["id"]
-                    function = tool_call.get("function") or {}
-                    if function.get("name"):
-                        slot["name"] += function["name"]
-                    if function.get("arguments"):
-                        slot["arguments"] += function["arguments"]
+                    if isinstance(event.get("usage"), dict):
+                        final_usage = dict(event["usage"])
+                    choices = event.get("choices") or []
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta") or {}
+                    if delta.get("content"):
+                        yield ChatChunk(kind="token", text=delta["content"])
+                    for tool_call in delta.get("tool_calls") or []:
+                        index = tool_call.get("index", 0)
+                        slot = pending.setdefault(
+                            index,
+                            {
+                                "id": "",
+                                "name": "",
+                                "arguments": "",
+                            },
+                        )
+                        if tool_call.get("id"):
+                            slot["id"] = tool_call["id"]
+                        function = tool_call.get("function") or {}
+                        if function.get("name"):
+                            slot["name"] += function["name"]
+                        if function.get("arguments"):
+                            slot["arguments"] += function["arguments"]
+            break
 
         for index in sorted(pending):
             slot = pending[index]
