@@ -5,7 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-from app.application.jobs.runtime_contract import RUNTIME_JOB_PLAN_KINDS
+from app.application.jobs.runtime_contract import MEDIA_JOB_PLAN_KIND
 from app.domain.project import ProjectSettings, RuntimeCostPolicy
 from app.domain.provider_pricing import (
     normalize_microunits,
@@ -30,7 +30,7 @@ from .task_runtime_governance import GovernedTaskRuntimeRepository
 
 DEFAULT_AGENT_MAX_COST_MICROUNITS = 10_000_000
 COST_GOVERNED_PLAN_KINDS = frozenset(
-    {AGENT_PLAN_KIND, *RUNTIME_JOB_PLAN_KINDS}
+    {AGENT_PLAN_KIND, MEDIA_JOB_PLAN_KIND}
 )
 
 
