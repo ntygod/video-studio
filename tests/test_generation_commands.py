@@ -89,8 +89,13 @@ def test_batch_generation_job_graph_is_atomic_and_idempotent(
         parent["id"],
         parent["id"],
     ]
+    assert all(child["runtime_plan_id"] for child in children)
+    assert all(child["runtime_task_id"] for child in children)
     assert operation["operation_type"] == "job.batch.create"
-    assert len(operation["affected_entities"]) == 3
+    affected = operation["affected_entities"]
+    assert sum(item["type"] == "job" for item in affected) == 3
+    assert sum(item["type"] == "runtime_plan" for item in affected) == 2
+    assert sum(item["type"] == "runtime_task" for item in affected) == 2
 
 
 def test_batch_generation_rejects_duplicate_units_without_jobs(
