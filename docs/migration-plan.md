@@ -15,13 +15,13 @@
 
 ## M2 · CommandBus 与 OperationLog
 
-核心 Artifact、Project、Unit、Asset、Proposal、Timeline、Job、Agent mutating tool 和生成结果已收口到 CommandBus / OperationLog，具备业务幂等、失败审计和首批安全补偿。
+核心 Artifact、Project、Unit、Asset、Proposal、Timeline、Job、Agent mutating tool 和生成结果已收口到 CommandBus/OperationLog，具备业务幂等、失败审计和首批安全补偿。
 
 待完成：复杂删除完整快照恢复、外部已执行任务的明确补偿边界扩展。
 
 ## M3 · Dependency、Freshness 与持久化修复
 
-已完成精确 ArtifactVersion / Asset 输入、Provenance、stale/blocked 传播、单点修复、级联预览、RegenerationPlan/Step、多进程 claim、恢复、Retry、Replan、素材输入与工作台闭环。
+已完成精确 ArtifactVersion/Asset 输入、Provenance、stale/blocked 传播、单点修复、级联预览、RegenerationPlan/Step、多进程 claim、恢复、Retry、Replan、素材输入与工作台闭环。
 
 待完成：部分成功策略、needs_review、已完成 Step compensation、外部 Provider 强制取消、大图压力、Asset 生产图与更多领域链。
 
@@ -29,7 +29,7 @@
 
 ### 已完成
 
-- [x] `0010` RuntimePlan / Task / Attempt / Event；
+- [x] `0010` RuntimePlan/Task/Attempt/Event；
 - [x] DAG、claim、lease、heartbeat、checkpoint、timeout、retry、Cancel、recovery；
 - [x] Agent Turn 原子提交、startup 恢复、SSE 与 logical tool exactly-once；
 - [x] `0011` admission slot 与 semantic event dedupe；
@@ -40,13 +40,17 @@
 - [x] `0014` 模型价格、不可变 Provider CostEntry 与默认 Agent 成本预算；
 - [x] LLM 价格快照、usage 计量、CostEntry exactly-once；
 - [x] 成本请求前门限与请求后真实费用保留；
-- [x] 模型价格配置、Turn 成本摘要、未定价告警与费用明细。
+- [x] 模型价格配置、Turn 成本摘要、未定价告警与费用明细；
+- [x] 项目级未定价 Provider allow/block 策略；
+- [x] 新 Agent Plan 冻结策略，运行中 Plan 不漂移；
+- [x] 严格模式请求前价格验证、响应后 usage 验证与持久化阻断事件；
+- [x] 工作台成本策略配置和显式 0 价格说明。
 
 ### 下一步
 
-- [ ] 为未定价 Provider 提供严格项目策略；
-- [ ] 外部 Provider idempotency / 异步 request ledger / 账单对账；
+- [ ] 外部 Provider idempotency/异步 request ledger/账单对账；
 - [ ] 图片、视频、TTS、渲染与存储成本；
+- [ ] 按 Provider、模型、角色与预算区间的细粒度成本策略；
 - [ ] 角色权限、多人审批与双人复核；
 - [ ] Planner、Executor、Reviewer、Repair 分层；
 - [ ] 通用 RuntimePlan Replan 与 Task compensation；
@@ -61,7 +65,7 @@
 - `docs/runtime-cost-metering.md`
 - `docs/implementation-log-m4-20260812.md`
 
-**M4 验收状态：** 通用执行、Agent exactly-once、准入、持久事件、审批与 TTL、token/tool/wall/cost 预算及首个 LLM 成本计量闭环已经成立。完整 Agent 2.0 仍需角色分层、质量评估和外部 Provider 对账。
+**M4 验收状态：** 通用执行、Agent exactly-once、准入、持久事件、审批与 TTL、token/tool/wall/cost 预算、LLM 成本计量和项目级严格计价闭环已经成立。完整 Agent 2.0 仍需角色分层、质量评估和外部 Provider 对账。
 
 ## M5 · Evaluator 与 Golden Projects
 

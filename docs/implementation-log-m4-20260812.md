@@ -1,7 +1,7 @@
 # M4 实施记录 · 2026-08-13
 
 > 分支：`refactor/kernel-v2-foundation`。  
-> 当前阶段：M4.1 至 M4.6 Agent 生产治理与成本闭环。
+> 当前阶段：M4.1 至 M4.7 Agent 生产治理、成本与严格合规闭环。
 
 ## M4.1 通用运行时
 
@@ -9,7 +9,7 @@
 
 ## M4.2 Agent Turn
 
-Turn、消息、Plan 与 Task 原子提交；startup 自动恢复。Agent 冻结 Provider/Model和 tool-loop checkpoint，logical tool call 与 Command 幂等身份跨 Attempt 稳定。RuntimeTaskEvent 驱动 SSE 与终态修复。
+Turn、消息、Plan 与 Task 原子提交；startup 自动恢复。Agent 冻结 Provider/Model与 tool-loop checkpoint，logical tool call 与 Command 幂等身份跨 Attempt 稳定。RuntimeTaskEvent 驱动 SSE 与终态修复。
 
 ## M4.3 准入与事件身份
 
@@ -21,54 +21,57 @@ Turn、消息、Plan 与 Task 原子提交；startup 自动恢复。Agent 冻结
 
 ## M4.5 审批工作台与 TTL
 
-项目级审批中心、当前 Turn 审批卡与刷新恢复完成。`0013` 增加 `expires_at`，startup / reaper 回收无人处理审批；用户审批与过期通过 CAS 决定唯一终态。
+项目级审批中心、当前 Turn 审批卡与刷新恢复完成。`0013` 增加 `expires_at`，startup/reaper 回收无人处理审批；用户审批与过期由 CAS 决定唯一终态。
 
 ## M4.6 Provider 价格与成本
 
-`0014` 新增：
+`0014` 新增 `model_pricing_profiles`、`runtime_cost_entries` 和默认 10 USD Agent 预算。LLM 价格规范化为整数微美元，真实请求前冻结 Provider/Model/价格，usage 生成不可变 CostEntry 并 exactly-once 推进 Ledger。
 
-- `model_pricing_profiles`；
-- `runtime_cost_entries`；
-- Agent 默认 10 USD 成本预算。
+到达上限时请求前拒绝；响应跨预算时先保存真实费用。缺少价格或 usage 的调用保留 `priced=false` 审计。工作台支持价格编辑、Turn 成本摘要、告警和明细。
 
-LLM 模型价格规范化为整数微美元。Agent 在真实请求前把 Provider、Model 与价格冻结进 checkpoint。OpenAI streaming 与 JSON protocol Adapter 传递 usage、response ID 和实际 model ID。
+## M4.7 项目严格 Provider 成本策略
 
-每个 usage 生成不可变 CostEntry，并在同一事务中推进 Task 水位和 Plan Ledger。稳定 `usage_key` 防止重复计费；改价不改变历史快照。
+ProjectSettings 新增：
 
-到达上限时下一次请求前拒绝；响应跨预算时先保存真实费用，再失败关闭。缺少价格或 usage 的调用保留审计并标记未完整计价。
+```json
+{
+  "runtime_cost_policy": {
+    "unpriced_provider_mode": "allow"
+  }
+}
+```
 
-工作台新增：
+默认 allow 保持兼容。每个新 Agent RuntimePlan 把项目策略冻结到 `policy.provider_cost_policy`；项目后续改动不影响运行中 Plan。
 
-- 模型输入/输出/缓存/请求价格编辑；
-- 渠道价格覆盖提示；
-- 模型能力价格列；
-- Agent Turn USD、token、调用次数和上限；
-- 未定价与超限告警；
-- 费用明细。
+block 模式建立两个 fail-closed 边界：
+
+- 模型无显式价格时，在 Provider 请求前写 `runtime.cost_policy.blocked` 并失败；
+- 已配置 token 价格但响应无 usage 时，先提交 unpriced CostEntry，再写阻断事件并失败。
+
+策略阻断复用硬预算终止控制流，不进入普通异常重试。项目策略更新通过 PatchProjectCommand、revision 乐观锁和 OperationLog。
+
+工作台顶栏新增成本策略中心，解释尽力/严格语义、策略冻结和显式 0 价格要求。
 
 ## 自动验收
 
-新增或扩展覆盖：
+覆盖：
 
-- Decimal 价格规范化与 cached token 计算；
-- 缺少 usage 不伪装完整计价；
-- Provider 价格 API；
-- 价格快照跨改价稳定；
-- CostEntry exactly-once；
-- Ledger token/cost 去重；
-- 未定价调用审计；
-- 请求前成本门限；
-- 请求后跨预算费用不回滚；
-- `0014` 迁移与唯一约束；
-- 前端 USD ↔ 微单位往返和 UI 类型语法检查。
+- 价格、usage、CostEntry 与 Ledger；
+- 项目策略读写和 revision；
+- 新 Plan 冻结、旧 Plan 不漂移；
+- 严格预检不调用 Provider；
+- 响应缺 usage 时费用事实不回滚；
+- allow 模式保持 unpriced 审计；
+- 阻断事件 exactly-once；
+- 前端 helper、类型、lint、设计检查和生产构建。
 
 ## 当前边界
 
-- 外部 Provider 请求尚无通用 idempotency 与账单对账；
+- 外部 Provider 请求无通用 idempotency 与账单对账；
 - 媒体/TTS/渲染/存储成本尚未计量；
-- 未定价调用只告警，不构成严格金额上限；
-- 角色审批、Planner/Reviewer、通用 Replan/compensation、token 持久流和 PostgreSQL 故障基线尚未完成。
+- 角色审批、Planner/Reviewer、通用 Replan/compensation、token 持久流和 PostgreSQL 故障基线尚未完成；
+- 严格策略尚无按 Provider/Model/角色的细粒度覆盖。
 
 ## 回滚
 
-价格配置可以回滚，CostEntry、Ledger、Decision、Event、Operation 与业务版本是历史事实，不应删除或重算。
+价格和项目策略可以回滚；CostEntry、Ledger、Decision、Event、Operation 与业务版本是历史事实，不应删除或重算。
