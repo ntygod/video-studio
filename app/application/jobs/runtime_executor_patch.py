@@ -9,6 +9,7 @@ from app.api.logging import request_id_var
 from app.application.reconciled_task_runtime import ReconciledTaskRuntime
 from app.application.regeneration_plan_service import advance_plan_for_job
 from app.application.runtime_governance import (
+    RuntimeBudgetExceeded,
     bind_runtime_execution,
     reset_runtime_execution,
 )
@@ -40,7 +41,6 @@ def _advance_parent(engine: JobEngine, job_id: str) -> None:
     try:
         advance_plan_for_job(engine.database, job_id, engine)
     except Exception:
-        # RegenerationPlan has its own durable recovery loop.
         return
 
 
@@ -54,6 +54,30 @@ def _runtime_job_current(
         and job.get("runtime_task_id") == context.task["id"]
         and int(job.get("runtime_generation") or 1) == generation
     )
+
+
+def _fail_job_once(
+    engine: JobEngine,
+    context: TaskExecutionContext,
+    job_id: str,
+    generation: int,
+    error: str,
+) -> None:
+    with UnitOfWork(engine.database) as uow:
+        current = uow.jobs.get(job_id)
+        if not _runtime_job_current(current, context, generation):
+            raise ConflictError(
+                "Job execution changed while recording a terminal failure"
+            )
+        if current["status"] != "failed":
+            uow.jobs.update_state(job_id, "failed", error=error)
+            uow.jobs.add_event(
+                job_id,
+                f"任务失败：{error}",
+                level="error",
+                stage="error",
+            )
+    _advance_parent(engine, job_id)
 
 
 def _execute_runtime_job(
@@ -109,11 +133,7 @@ def _execute_runtime_job(
                 current = uow.jobs.get(job_id)
             return bool(
                 current["cancel_requested"]
-                or not _runtime_job_current(
-                    current,
-                    context,
-                    generation,
-                )
+                or not _runtime_job_current(current, context, generation)
             )
         except Exception:
             return True
@@ -169,6 +189,10 @@ def _execute_runtime_job(
             "result": completed.get("result") or {},
             "replayed": False,
         }
+    except RuntimeBudgetExceeded as exc:
+        error = str(exc)
+        _fail_job_once(engine, context, job_id, generation, error)
+        raise RuntimeError(error) from None
     except JobCanceled:
         with UnitOfWork(engine.database) as uow:
             current = uow.jobs.get(job_id)
