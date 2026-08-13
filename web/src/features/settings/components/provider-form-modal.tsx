@@ -3,6 +3,10 @@
 import { useEffect, useState, type ClipboardEvent } from "react";
 import { ClipboardPaste, CloudDownload, KeyRound, Plus, Trash2 } from "lucide-react";
 
+import {
+    modelPricingForm,
+    pricingFromModelForm,
+} from "@/features/settings/lib/model-pricing";
 import { capabilityLabel } from "@/features/workspace/lib/labels";
 import type { ProviderModel, ProviderProfile } from "@/services/api";
 import { useCreateProviderProfile, useDiscoverProviderModels, useUpdateProviderProfile } from "@/services/queries";
@@ -21,7 +25,7 @@ type ProviderFormValues = {
     settings_json: string;
 };
 
-/** 模型列表的一行，capabilities/defaults 以 JSON 文本编辑，保存时校验。 */
+/** 模型列表的一行，JSON 与 USD 价格在展开区编辑。 */
 type ModelRow = {
     key: string;
     name: string;
@@ -29,11 +33,31 @@ type ModelRow = {
     capability_type: string;
     capabilities_json: string;
     defaults_json: string;
+    inputUsdPerMillion: string;
+    outputUsdPerMillion: string;
+    cachedInputUsdPerMillion: string;
+    requestUsd: string;
     is_default: boolean;
 };
 
 function nextKey(): string {
     return typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+}
+
+function emptyRow(capability = "llm"): ModelRow {
+    return {
+        key: nextKey(),
+        name: "",
+        model_id: "",
+        capability_type: capability,
+        capabilities_json: "{}",
+        defaults_json: "{}",
+        inputUsdPerMillion: "",
+        outputUsdPerMillion: "",
+        cachedInputUsdPerMillion: "",
+        requestUsd: "",
+        is_default: false,
+    };
 }
 
 function rowFromModel(model: ProviderModel): ModelRow {
@@ -44,6 +68,7 @@ function rowFromModel(model: ProviderModel): ModelRow {
         capability_type: model.capability_type,
         capabilities_json: JSON.stringify(model.capabilities || {}, null, 2),
         defaults_json: JSON.stringify(model.defaults || {}, null, 2),
+        ...modelPricingForm(model.pricing),
         is_default: model.is_default ?? false,
     };
 }
@@ -66,11 +91,7 @@ function parseSettingsJson(text: string): Record<string, unknown> | undefined {
     return parseObjectJson(trimmed);
 }
 
-/**
- * 渠道配置弹窗：模型列表用表格增删行，不再手写整段 JSON。
- *
- * @param provider ProviderProfile | null 传入表示编辑，null 表示新建
- */
+/** 渠道配置弹窗：模型列表用表格增删行，价格按 USD 配置。 */
 export function ProviderFormModal({ open, provider, onClose }: { open: boolean; provider: ProviderProfile | null; onClose: () => void }) {
     const { message } = useApp();
     const [form] = Form.useForm<ProviderFormValues>();
@@ -93,7 +114,7 @@ export function ProviderFormModal({ open, provider, onClose }: { open: boolean; 
                 enabled: provider.enabled,
                 settings_json: JSON.stringify(provider.settings || {}, null, 2),
             });
-            setRows(provider.models?.length ? provider.models.map(rowFromModel) : [rowFromModel({ id: "", name: "", model_id: "", capability_type: provider.capability_type, capabilities: {}, defaults: {}, is_default: false })]);
+            setRows(provider.models?.length ? provider.models.map(rowFromModel) : [emptyRow(provider.capability_type)]);
         } else {
             form.setFieldsValue({
                 name: "",
@@ -104,7 +125,7 @@ export function ProviderFormModal({ open, provider, onClose }: { open: boolean; 
                 enabled: true,
                 settings_json: "{}",
             });
-            setRows([{ key: nextKey(), name: "", model_id: "", capability_type: "llm", capabilities_json: "{}", defaults_json: "{}", is_default: false }]);
+            setRows([emptyRow("llm")]);
         }
     }, [form, open, provider]);
 
@@ -115,15 +136,7 @@ export function ProviderFormModal({ open, provider, onClose }: { open: boolean; 
     const addRow = () => {
         setRows((current) => [
             ...current,
-            {
-                key: nextKey(),
-                name: "",
-                model_id: "",
-                capability_type: form.getFieldValue("capability_type") || "llm",
-                capabilities_json: "{}",
-                defaults_json: "{}",
-                is_default: false,
-            },
+            emptyRow(form.getFieldValue("capability_type") || "llm"),
         ]);
     };
 
@@ -171,7 +184,7 @@ export function ProviderFormModal({ open, provider, onClose }: { open: boolean; 
             }
             applyPastedApiKey(value);
         } catch {
-            message.warning("浏览器未授权读取剪贴板，请聚焦输入框后使用 Ctrl+V / ⌘V");
+            message.warning("浏览器未授权读取剪贴板，请聚焦输入框后使用 Ctrl+V / ⌘V 粘贴");
         }
     };
 
@@ -204,13 +217,9 @@ export function ProviderFormModal({ open, provider, onClose }: { open: boolean; 
                     return saved
                         ? { ...saved, name: saved.name || model.name }
                         : {
-                              key: nextKey(),
+                              ...emptyRow(model.capability_type || capability),
                               name: model.name || model.model_id,
                               model_id: model.model_id,
-                              capability_type: model.capability_type || capability,
-                              capabilities_json: "{}",
-                              defaults_json: "{}",
-                              is_default: false,
                           };
                 });
                 const manual = current.filter((row) => row.model_id.trim() && !discoveredIds.has(row.model_id.trim()));
@@ -244,6 +253,15 @@ export function ProviderFormModal({ open, provider, onClose }: { open: boolean; 
                 message.error(`模型「${row.model_id}」的 defaults JSON 格式不正确`);
                 return;
             }
+            let pricing;
+            try {
+                pricing = pricingFromModelForm(row);
+            } catch (error) {
+                message.error(
+                    `模型「${row.model_id}」${error instanceof Error ? error.message : "价格格式不正确"}`,
+                );
+                return;
+            }
             models.push({
                 id: "",
                 name: row.name.trim() || row.model_id.trim(),
@@ -251,6 +269,7 @@ export function ProviderFormModal({ open, provider, onClose }: { open: boolean; 
                 capability_type: row.capability_type || values.capability_type,
                 capabilities,
                 defaults,
+                pricing,
                 is_default: row.is_default,
             });
         }
@@ -340,7 +359,7 @@ export function ProviderFormModal({ open, provider, onClose }: { open: boolean; 
                     rowKey="key"
                     size="small"
                     pagination={false}
-                    scroll={{ y: 260 }}
+                    scroll={{ y: 300 }}
                     dataSource={rows}
                     locale={{ emptyText: "还没有模型，点右上角添加" }}
                     expandable={{
@@ -353,6 +372,15 @@ export function ProviderFormModal({ open, provider, onClose }: { open: boolean; 
                                 <div>
                                     <div className="mb-1 text-caption text-[var(--s-faint)]">defaults（JSON，可选）</div>
                                     <Textarea rows={3} spellCheck={false} className="font-mono !text-label" value={row.defaults_json} onChange={(event) => updateRow(row.key, { defaults_json: event.target.value })} />
+                                </div>
+                                <div className="col-span-2 rounded-[var(--r-sm)] border border-[var(--hairline)] bg-[var(--s-panel)] p-3">
+                                    <div className="mb-2 text-caption text-[var(--s-faint)]">价格（USD；token 价格按每 100 万 tokens）</div>
+                                    <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+                                        <Input size="small" placeholder="输入，例如 1.25" value={row.inputUsdPerMillion} onChange={(event) => updateRow(row.key, { inputUsdPerMillion: event.target.value })} />
+                                        <Input size="small" placeholder="输出，例如 5" value={row.outputUsdPerMillion} onChange={(event) => updateRow(row.key, { outputUsdPerMillion: event.target.value })} />
+                                        <Input size="small" placeholder="缓存输入，可选" value={row.cachedInputUsdPerMillion} onChange={(event) => updateRow(row.key, { cachedInputUsdPerMillion: event.target.value })} />
+                                        <Input size="small" placeholder="单次请求，可选" value={row.requestUsd} onChange={(event) => updateRow(row.key, { requestUsd: event.target.value })} />
+                                    </div>
                                 </div>
                             </div>
                         ),
@@ -372,7 +400,7 @@ export function ProviderFormModal({ open, provider, onClose }: { open: boolean; 
                         {
                             title: "能力",
                             dataIndex: "capability_type",
-                            width: 150,
+                            width: 140,
                             render: (_, row) => (
                                 <Select
                                     size="small"
@@ -384,6 +412,15 @@ export function ProviderFormModal({ open, provider, onClose }: { open: boolean; 
                             ),
                         },
                         {
+                            title: "价格",
+                            width: 82,
+                            render: (_, row) => (
+                                <span className={row.inputUsdPerMillion || row.outputUsdPerMillion || row.requestUsd ? "text-[var(--s-success)]" : "text-[var(--s-faint)]"}>
+                                    {row.inputUsdPerMillion || row.outputUsdPerMillion || row.requestUsd ? "已设置" : "未设置"}
+                                </span>
+                            ),
+                        },
+                        {
                             title: "默认",
                             dataIndex: "is_default",
                             width: 96,
@@ -391,11 +428,7 @@ export function ProviderFormModal({ open, provider, onClose }: { open: boolean; 
                                 <Button
                                     size="sm"
                                     variant={row.is_default ? "primary" : "ghost"}
-                                    aria-label={
-                                        row.is_default
-                                            ? `取消默认 ${row.model_id || row.name || "未命名"}`
-                                            : `设为默认 ${row.model_id || row.name || "未命名"}`
-                                    }
+                                    aria-label={row.is_default ? `取消默认 ${row.model_id || row.name || "未命名"}` : `设为默认 ${row.model_id || row.name || "未命名"}`}
                                     onClick={() => toggleDefault(row.key)}
                                 >
                                     {row.is_default ? "默认" : "设为默认"}

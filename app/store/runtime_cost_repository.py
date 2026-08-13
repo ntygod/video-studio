@@ -167,6 +167,7 @@ class RuntimeCostRepositoryMixin:
         now: float | None = None,
     ) -> dict[str, Any]:
         state = super().budget_state(plan_id, now=now)
+        state["plan_status"] = self._plan_row(plan_id).status
         cost = int(state["usage"].get("cost_microunits") or 0)
         state["usage"]["cost_usd"] = microunits_to_usd(cost)
         state["usage"].update(self._cost_counts(plan_id))

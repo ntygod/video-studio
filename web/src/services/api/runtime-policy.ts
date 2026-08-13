@@ -58,21 +58,64 @@ export type RuntimeProjectPolicyDecision = RuntimePolicyDecision & {
 
 export type RuntimeBudgetState = {
     plan_id: string;
-    budget: Record<string, number>;
+    plan_status: string;
+    budget: Record<string, number> & {
+        max_cost_microunits?: number;
+        max_cost_usd?: number;
+    };
     usage: {
         prompt_tokens: number;
         completion_tokens: number;
         total_tokens: number;
         tool_calls: number;
         cost_microunits: number;
+        cost_usd: number;
+        provider_calls: number;
+        priced_calls: number;
+        unpriced_calls: number;
         wall_seconds: number;
     };
     violation: {
         dimension: string;
         limit: number;
         actual: number;
+        limit_usd?: number;
+        actual_usd?: number;
         message: string;
     } | null;
+};
+
+export type RuntimeCostEntry = {
+    id: string;
+    plan_id: string;
+    task_id: string;
+    attempt_id: string | null;
+    usage_key: string;
+    source_type: string;
+    provider_profile_id: string;
+    provider_name: string;
+    adapter: string;
+    model_profile_id: string;
+    model_id: string;
+    capability_type: string;
+    provider_request_id: string;
+    currency: string;
+    pricing_sha256: string;
+    pricing_snapshot: Record<string, unknown>;
+    usage: {
+        prompt_tokens: number;
+        completion_tokens: number;
+        cached_prompt_tokens: number;
+        total_tokens: number;
+        provider_request_id: string;
+        provider_model_id: string;
+        [key: string]: unknown;
+    };
+    breakdown: Record<string, number>;
+    amount_microunits: number;
+    amount_usd: number;
+    priced: boolean;
+    created_at: number;
 };
 
 export function listTurnPolicyDecisions(
@@ -120,6 +163,26 @@ export function denyRuntimePolicyDecision(
 export function getRuntimeBudget(planId: string) {
     return get<RuntimeBudgetState>(
         `/api/runtime-plans/${seg(planId)}/budget`,
+    );
+}
+
+export function listRuntimeCosts(planId: string, limit = 100) {
+    return get<RuntimeCostEntry[]>(
+        `/api/runtime-plans/${seg(planId)}/costs`,
+        { limit },
+    );
+}
+
+export function getTurnRuntimeBudget(turnId: string) {
+    return get<RuntimeBudgetState>(
+        `/api/turns/${seg(turnId)}/budget`,
+    );
+}
+
+export function listTurnRuntimeCosts(turnId: string, limit = 20) {
+    return get<RuntimeCostEntry[]>(
+        `/api/turns/${seg(turnId)}/costs`,
+        { limit },
     );
 }
 

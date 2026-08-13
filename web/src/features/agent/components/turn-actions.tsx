@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { Undo2 } from "lucide-react";
 
 import { PolicyApprovalCard } from "@/features/agent/components/policy-approval-card";
+import { RuntimeCostSummary } from "@/features/agent/components/runtime-cost-summary";
 import { revertTurn, type AgentTurn } from "@/services/api";
 import {
     useResolveRuntimePolicyDecision,
@@ -11,7 +12,7 @@ import {
 } from "@/services/queries";
 import { Button, Popconfirm, useApp } from "@/shared/ui";
 
-/** 高风险动作确认与「撤销本回合」操作区。 */
+/** 高风险动作确认、费用摘要与「撤销本回合」操作区。 */
 export function TurnActions({
     turnId,
     entities,
@@ -68,6 +69,7 @@ export function TurnActions({
 
     return (
         <div className="px-3 pb-2">
+            <RuntimeCostSummary turnId={turnId} />
             {pending.map((decision) => (
                 <PolicyApprovalCard
                     key={decision.id}

@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { AudioWaveform, BrainCircuit, ImageIcon, Plus, RotateCw, SquarePen, Trash2, Video } from "lucide-react";
 
 import { ProviderFormModal } from "@/features/settings/components/provider-form-modal";
+import { formatModelPricing } from "@/features/settings/lib/model-pricing";
 import { capabilityLabel } from "@/features/workspace/lib/labels";
 import type { ModelCapability, ProviderProfile } from "@/services/api";
 import {
@@ -42,6 +43,9 @@ function ProviderCard({
     onTest: () => void;
     testing: boolean;
 }) {
+    const pricedModels = provider.models.filter(
+        (model) => model.pricing && Object.keys(model.pricing).length > 0,
+    ).length;
     return (
         <Surface level="panel" radius="md" hairline lift inset="4" className="h-full">
             <div className="flex items-center justify-between gap-3">
@@ -71,6 +75,12 @@ function ProviderCard({
                     <dt className="shrink-0 text-[var(--s-faint)]">模型</dt>
                     <dd className="truncate text-[var(--s-muted)]">
                         {provider.models.map((model) => model.model_id).join("、") || "未配置"}
+                    </dd>
+                </div>
+                <div className="flex items-center justify-between gap-4">
+                    <dt className="shrink-0 text-[var(--s-faint)]">价格覆盖</dt>
+                    <dd className={pricedModels === provider.models.length && pricedModels > 0 ? "text-[var(--s-success)]" : "text-[var(--s-warning)]"}>
+                        {pricedModels}/{provider.models.length} 个模型已定价
                     </dd>
                 </div>
             </dl>
@@ -160,7 +170,7 @@ export default function SettingsPage() {
                         模型与渠道
                     </Text>
                     <Text as="p" variant="body" tone="muted" className="mt-1">
-                        每种能力都可以配置外部 API Key 与 Base URL，密钥只回显掩码。
+                        配置外部 API、模型价格与默认能力；密钥只回显掩码。
                     </Text>
                 </div>
                 <div className="flex gap-2">
@@ -217,7 +227,7 @@ export default function SettingsPage() {
                         已配置渠道
                     </Text>
                     <Text variant="caption" tone="faint" className="mt-1 block">
-                        密钥只显示掩码；连接测试不会保存额外数据。
+                        模型价格会在调用前冻结，历史费用不会被后续改价重写。
                     </Text>
                 </div>
                 {!missing.length ? <Tag color="green">核心能力已覆盖</Tag> : null}
@@ -261,7 +271,7 @@ export default function SettingsPage() {
 
             <section className="mt-8">
                 <Text as="h2" variant="heading" tone="ink" className="mb-2 block">
-                    模型能力总览
+                    模型能力与价格
                 </Text>
                 <Surface level="panel" radius="md" className="overflow-hidden">
                     <Table<ModelCapability>
@@ -282,6 +292,14 @@ export default function SettingsPage() {
                                 render: (value: string) => <Tag className="m-0">{capabilityLabel(value)}</Tag>,
                             },
                             { title: "渠道", dataIndex: "provider_name" },
+                            {
+                                title: "价格",
+                                render: (_, row) => (
+                                    <span className={row.pricing && Object.keys(row.pricing).length ? "text-[var(--s-muted)]" : "text-[var(--s-warning)]"}>
+                                        {formatModelPricing(row.pricing)}
+                                    </span>
+                                ),
+                            },
                             { title: "适配器", dataIndex: "adapter" },
                             {
                                 title: "状态",

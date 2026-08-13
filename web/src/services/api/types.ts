@@ -233,6 +233,14 @@ export type AgentTurnEvent = {
     [key: string]: unknown;
 };
 
+export type ProviderModelPricing = {
+    currency?: "USD";
+    input_microunits_per_million_tokens?: number;
+    output_microunits_per_million_tokens?: number;
+    cached_input_microunits_per_million_tokens?: number;
+    request_microunits?: number;
+};
+
 export type ProviderModel = {
     id: string;
     name: string;
@@ -240,6 +248,8 @@ export type ProviderModel = {
     capability_type: string;
     capabilities: Record<string, unknown>;
     defaults: Record<string, unknown>;
+    pricing?: ProviderModelPricing;
+    pricing_updated_at?: number | null;
     is_default: boolean;
 };
 
@@ -264,6 +274,8 @@ export type ModelCapability = {
     capability_type: string;
     capabilities: Record<string, unknown>;
     defaults: Record<string, unknown>;
+    pricing?: ProviderModelPricing;
+    pricing_updated_at?: number | null;
     is_default: boolean;
     provider_profile_id: string;
     provider_name: string;

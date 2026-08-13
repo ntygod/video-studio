@@ -6,13 +6,14 @@ import {
     approveRuntimePolicyDecision,
     denyRuntimePolicyDecision,
     getActiveConversationTurn,
+    getTurnRuntimeBudget,
     listProjectPolicyDecisions,
     listTurnPolicyDecisions,
+    listTurnRuntimeCosts,
     type RuntimePolicyDecision,
     type RuntimePolicyDecisionStatus,
 } from "@/services/api";
 import { qk } from "./keys";
-
 
 export function useActiveConversationTurn(
     projectId: string,
@@ -46,7 +47,8 @@ export function useTurnPolicyDecisions(
         enabled: Boolean(turnId),
         staleTime: 1_000,
         refetchInterval: (query) =>
-            active || query.state.data?.some(
+            active ||
+            query.state.data?.some(
                 (decision) => decision.status === "pending",
             )
                 ? 1_500
@@ -65,6 +67,40 @@ export function useProjectPolicyDecisions(
         enabled: Boolean(projectId),
         staleTime: 2_000,
         refetchInterval: 5_000,
+        refetchOnWindowFocus: true,
+    });
+}
+
+export function useTurnRuntimeBudget(
+    turnId: string | null,
+    active = false,
+) {
+    return useQuery({
+        queryKey: qk.turnRuntimeBudget(turnId || ""),
+        queryFn: () => getTurnRuntimeBudget(turnId as string),
+        enabled: Boolean(turnId),
+        staleTime: 1_000,
+        refetchInterval: (query) =>
+            active ||
+            ["queued", "running"].includes(
+                query.state.data?.plan_status || "",
+            )
+                ? 2_000
+                : false,
+        refetchOnWindowFocus: true,
+    });
+}
+
+export function useTurnRuntimeCosts(
+    turnId: string | null,
+    active = false,
+) {
+    return useQuery({
+        queryKey: qk.turnRuntimeCosts(turnId || ""),
+        queryFn: () => listTurnRuntimeCosts(turnId as string),
+        enabled: Boolean(turnId),
+        staleTime: 1_000,
+        refetchInterval: active ? 2_000 : false,
         refetchOnWindowFocus: true,
     });
 }
@@ -98,6 +134,12 @@ export function useResolveRuntimePolicyDecision(
                             item.id === decision.id ? decision : item,
                         ),
                 );
+                client.invalidateQueries({
+                    queryKey: qk.turnRuntimeBudget(targetTurnId),
+                });
+                client.invalidateQueries({
+                    queryKey: qk.turnRuntimeCosts(targetTurnId),
+                });
             }
             if (projectId) {
                 client.invalidateQueries({
