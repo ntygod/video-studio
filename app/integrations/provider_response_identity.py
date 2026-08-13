@@ -1,53 +1,57 @@
-"""Provider response identity observed before full response persistence."""
+"""Persist Provider response identity before the full response is durable."""
 
 from __future__ import annotations
 
-from contextvars import ContextVar
+import time
 
 from app.integrations.provider_request import current_provider_request
-
-_observed: ContextVar[dict[str, dict[str, str]] | None] = ContextVar(
-    "video_studio_provider_response_identity",
-    default=None,
-)
+from app.store.repositories import ConflictError
 
 
 def observe_provider_response(
     provider_request_id: str,
     provider_model_id: str = "",
 ) -> None:
-    binding = current_provider_request()
-    if binding is None:
+    request_binding = current_provider_request()
+    if request_binding is None:
         return
-    request_id = str(provider_request_id or "").strip()
-    model_id = str(provider_model_id or "").strip()
-    current = dict(_observed.get() or {})
-    entry = dict(current.get(binding.request_id) or {})
-    existing = str(entry.get("provider_request_id") or "")
-    if request_id and existing and existing != request_id:
-        raise RuntimeError(
-            "Provider response request id changed during one dispatch"
+    request_id = str(provider_request_id or "").strip()[:300]
+    if not request_id:
+        return
+
+    from app.application.runtime_governance import (
+        current_runtime_execution,
+    )
+    from app.store import UnitOfWork
+
+    runtime_binding = current_runtime_execution()
+    if runtime_binding is None:
+        return
+    context = runtime_binding.context
+    now = time.time()
+    with UnitOfWork(context.runtime.database) as uow:
+        uow.task_runtime._provider_request_lease(
+            plan_id=context.plan["id"],
+            task_id=context.task["id"],
+            attempt_id=context.attempt["id"],
+            claim_token=context.claim["claim_token"],
+            now=now,
         )
-    if request_id:
-        entry["provider_request_id"] = request_id
-    if model_id:
-        entry["provider_model_id"] = model_id
-    current[binding.request_id] = entry
-    _observed.set(current)
+        row = uow.task_runtime._provider_request_row(
+            request_binding.request_id
+        )
+        if row.provider_request_id and row.provider_request_id != request_id:
+            raise ConflictError(
+                "Provider response request id changed during one dispatch"
+            )
+        row.provider_request_id = request_id
+        row.updated_at = now
+        if provider_model_id:
+            summary = dict(row.request_summary_json and {})
+            # The canonical model is already frozen on the request row. The
+            # response model remains available in usage at normal completion.
+            del summary
+        uow.session.flush()
 
 
-def observed_provider_response(request_id: str) -> dict[str, str]:
-    return dict((_observed.get() or {}).get(str(request_id), {}))
-
-
-def clear_observed_provider_response(request_id: str) -> None:
-    current = dict(_observed.get() or {})
-    current.pop(str(request_id), None)
-    _observed.set(current or None)
-
-
-__all__ = [
-    "clear_observed_provider_response",
-    "observe_provider_response",
-    "observed_provider_response",
-]
+__all__ = ["observe_provider_response"]
