@@ -18,6 +18,9 @@ from .runtime_cost_policy_repository import (
     RuntimeCostPolicyRepositoryMixin,
 )
 from .runtime_cost_repository import RuntimeCostRepositoryMixin
+from .runtime_provider_reconciliation_repository import (
+    RuntimeProviderReconciliationQueryMixin,
+)
 from .runtime_provider_request_repository import (
     RuntimeProviderRequestRepositoryMixin,
 )
@@ -28,6 +31,7 @@ DEFAULT_AGENT_MAX_COST_MICROUNITS = 10_000_000
 
 
 class CostedTaskRuntimeRepository(
+    RuntimeProviderReconciliationQueryMixin,
     RuntimeProviderRequestRepositoryMixin,
     RuntimeCostPolicyRepositoryMixin,
     RuntimeCostRepositoryMixin,
