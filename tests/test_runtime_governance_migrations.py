@@ -27,7 +27,7 @@ def test_runtime_governance_migration_installs_policy_budget_cost_and_request_ta
             revision = connection.execute(
                 text("SELECT version_num FROM alembic_version")
             ).scalar_one()
-        assert revision == HEAD_REVISION == "20260813_0015"
+        assert revision == HEAD_REVISION == "20260813_0016"
         decision_columns = {
             item["name"]
             for item in inspector.get_columns(
@@ -70,6 +70,14 @@ def test_runtime_governance_migration_installs_policy_budget_cost_and_request_ta
                 "runtime_provider_requests"
             )
         }
+        job_columns = {
+            item["name"]
+            for item in inspector.get_columns("jobs")
+        }
+        job_indexes = {
+            item["name"]
+            for item in inspector.get_indexes("jobs")
+        }
         assert "expires_at" in decision_columns
         assert "ix_runtime_policy_pending_expiry" in decision_indexes
         assert "uq_runtime_policy_plan_action" in decision_unique
@@ -77,5 +85,14 @@ def test_runtime_governance_migration_installs_policy_budget_cost_and_request_ta
         assert "uq_runtime_cost_plan_usage" in cost_unique
         assert "uq_runtime_provider_request_plan_key" in request_unique
         assert "ix_runtime_provider_requests_status_updated" in request_indexes
+        assert {
+            "runtime_plan_id",
+            "runtime_task_id",
+            "runtime_generation",
+        } <= job_columns
+        assert {
+            "ix_jobs_runtime_plan_id",
+            "ix_jobs_runtime_task_id",
+        } <= job_indexes
     finally:
         database.engine.dispose()
