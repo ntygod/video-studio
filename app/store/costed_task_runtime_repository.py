@@ -18,6 +18,9 @@ from .runtime_cost_policy_repository import (
     RuntimeCostPolicyRepositoryMixin,
 )
 from .runtime_cost_repository import RuntimeCostRepositoryMixin
+from .runtime_provider_request_repository import (
+    RuntimeProviderRequestRepositoryMixin,
+)
 from .task_runtime_extensions import AGENT_PLAN_KIND
 from .task_runtime_governance import GovernedTaskRuntimeRepository
 
@@ -25,11 +28,12 @@ DEFAULT_AGENT_MAX_COST_MICROUNITS = 10_000_000
 
 
 class CostedTaskRuntimeRepository(
+    RuntimeProviderRequestRepositoryMixin,
     RuntimeCostPolicyRepositoryMixin,
     RuntimeCostRepositoryMixin,
     GovernedTaskRuntimeRepository,
 ):
-    """Governed runtime plus Provider pricing and cost-ledger semantics."""
+    """Governed runtime plus Provider request and cost-ledger semantics."""
 
     def _project_provider_cost_policy(
         self,

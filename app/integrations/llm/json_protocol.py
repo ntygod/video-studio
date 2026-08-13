@@ -7,6 +7,7 @@ from typing import Any, Iterator
 import httpx
 
 from app.integrations.provider_http import provider_endpoint, provider_headers
+from app.integrations.provider_request import provider_request_headers
 
 from .base import ChatChunk, LLMConfigurationError, ToolCall, ToolSpec
 
@@ -77,7 +78,7 @@ class JsonProtocolAdapter:
             ]
         response = httpx.post(
             self.chat_url,
-            headers=self.headers,
+            headers=provider_request_headers(self.headers),
             json={
                 "model": self.model,
                 "messages": body_messages,

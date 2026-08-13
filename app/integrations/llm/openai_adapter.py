@@ -6,6 +6,7 @@ from typing import Any, Iterator
 import httpx
 
 from app.integrations.provider_http import provider_endpoint, provider_headers
+from app.integrations.provider_request import provider_request_headers
 
 from .base import ChatChunk, LLMConfigurationError, ToolCall, ToolSpec
 
@@ -66,7 +67,7 @@ class OpenAIAdapter:
             with httpx.stream(
                 "POST",
                 self.chat_url,
-                headers=self.headers,
+                headers=provider_request_headers(self.headers),
                 json=request_payload,
                 timeout=120,
             ) as response:

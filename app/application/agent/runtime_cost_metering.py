@@ -1,20 +1,29 @@
-"""Freeze Agent LLM pricing and meter every successful Provider response."""
+"""Freeze Agent pricing and meter durable external Provider requests."""
 
 from __future__ import annotations
 
+import hashlib
+import json
 from copy import deepcopy
 from typing import Any, Iterator
 
-from app.domain.provider_pricing import (
-    normalize_llm_usage,
-    normalize_model_pricing,
-)
+import httpx
+
 from app.application.runtime_governance import (
     RuntimeBudgetExceeded,
     current_runtime_execution,
 )
+from app.domain.provider_pricing import (
+    normalize_llm_usage,
+    normalize_model_pricing,
+)
 from app.integrations.llm import build_adapter
-from app.integrations.llm.base import ChatChunk, ToolSpec
+from app.integrations.llm.base import ChatChunk, ToolCall, ToolSpec
+from app.integrations.provider_request import (
+    bind_provider_request,
+    provider_idempotency_header,
+    reset_provider_request,
+)
 from app.store import UnitOfWork
 
 _INSTALLED = False
@@ -98,7 +107,7 @@ def _load_provider_and_snapshot(
         else normalize_model_pricing(model.get("pricing"))
     )
     snapshot = {
-        "version": 1,
+        "version": 2,
         "source": (
             "legacy_unpriced"
             if has_prior_usage
@@ -116,6 +125,7 @@ def _load_provider_and_snapshot(
         ),
         "pricing": pricing,
         "pricing_updated_at": model.get("pricing_updated_at"),
+        "request_idempotency_header": provider_idempotency_header(provider),
     }
     checkpoint["llm_pricing_snapshot"] = deepcopy(snapshot)
     checkpoint.setdefault("cost_microunits", 0)
@@ -143,8 +153,46 @@ def _block_unpriced_provider(
     raise RuntimeBudgetExceeded(result["violation"])
 
 
+def _request_fingerprint(
+    *,
+    model_id: str,
+    messages: list[dict[str, Any]],
+    tools: list[ToolSpec],
+    max_tokens: int,
+    temperature: float,
+) -> str:
+    payload = {
+        "model_id": model_id,
+        "messages": messages,
+        "tools": [
+            {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters,
+            }
+            for tool in tools
+        ],
+        "max_tokens": int(max_tokens),
+        "temperature": float(temperature),
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _known_provider_rejection(exc: BaseException) -> bool:
+    return bool(
+        isinstance(exc, httpx.HTTPStatusError)
+        and 400 <= exc.response.status_code < 500
+    )
+
+
 class MeteredLLMAdapter:
-    """Transparent Adapter wrapper with exactly-once Provider cost entries."""
+    """Adapter wrapper with request replay, idempotency, and exact costs."""
 
     def __init__(
         self,
@@ -159,7 +207,11 @@ class MeteredLLMAdapter:
         self.supports_native_tools = bool(
             getattr(inner, "supports_native_tools", False)
         )
-        self.model = getattr(inner, "model", pricing_snapshot.get("model_id"))
+        self.model = getattr(
+            inner,
+            "model",
+            pricing_snapshot.get("model_id"),
+        )
 
     def _precheck(self, binding) -> None:
         context = binding.context
@@ -183,35 +235,131 @@ class MeteredLLMAdapter:
                 phase="preflight",
             )
 
-    def _record(self, binding, usage: dict[str, Any]) -> dict[str, Any]:
+    def _prepare_request(
+        self,
+        binding,
+        messages: list[dict[str, Any]],
+        tools: list[ToolSpec],
+        *,
+        max_tokens: int,
+        temperature: float,
+    ) -> dict[str, Any]:
+        context = binding.context
+        round_index = int(self.checkpoint.get("round") or 0)
+        request_key = (
+            f"llm:{context.task['id']}:round:{round_index}"
+        )
+        request_sha256 = _request_fingerprint(
+            model_id=str(self.pricing_snapshot.get("model_id") or self.model),
+            messages=messages,
+            tools=tools,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+        with UnitOfWork(context.runtime.database) as uow:
+            return uow.task_runtime.prepare_provider_request(
+                plan_id=context.plan["id"],
+                task_id=context.task["id"],
+                attempt_id=context.attempt["id"],
+                claim_token=context.claim["claim_token"],
+                request_key=request_key,
+                source_type="llm",
+                provider_snapshot=self.pricing_snapshot,
+                request_sha256=request_sha256,
+                request_summary={
+                    "round": round_index,
+                    "model_id": str(
+                        self.pricing_snapshot.get("model_id") or self.model
+                    ),
+                    "message_count": len(messages),
+                    "tool_names": [tool.name for tool in tools],
+                    "max_tokens": int(max_tokens),
+                    "temperature": float(temperature),
+                },
+                idempotency_header=str(
+                    self.pricing_snapshot.get(
+                        "request_idempotency_header"
+                    )
+                    or ""
+                ),
+            )
+
+    def _start_request(self, binding, request_id: str) -> dict[str, Any]:
+        context = binding.context
+        with UnitOfWork(context.runtime.database) as uow:
+            return uow.task_runtime.start_provider_request(
+                request_id,
+                plan_id=context.plan["id"],
+                task_id=context.task["id"],
+                attempt_id=context.attempt["id"],
+                claim_token=context.claim["claim_token"],
+            )
+
+    def _mark_response_started(self, binding, request_id: str) -> None:
+        context = binding.context
+        with UnitOfWork(context.runtime.database) as uow:
+            uow.task_runtime.mark_provider_request_response_started(
+                request_id,
+                plan_id=context.plan["id"],
+                task_id=context.task["id"],
+                attempt_id=context.attempt["id"],
+                claim_token=context.claim["claim_token"],
+            )
+
+    def _mark_failure(
+        self,
+        binding,
+        request_id: str,
+        exc: BaseException,
+        *,
+        outcome_unknown: bool,
+    ) -> dict[str, Any]:
+        context = binding.context
+        with UnitOfWork(context.runtime.database) as uow:
+            return uow.task_runtime.fail_provider_request(
+                request_id,
+                plan_id=context.plan["id"],
+                task_id=context.task["id"],
+                attempt_id=context.attempt["id"],
+                claim_token=context.claim["claim_token"],
+                error=str(exc) or exc.__class__.__name__,
+                outcome_unknown=outcome_unknown,
+            )
+
+    def _record(
+        self,
+        binding,
+        request: dict[str, Any],
+        usage: dict[str, Any],
+        response: dict[str, Any],
+    ) -> dict[str, Any]:
         context = binding.context
         normalized = normalize_llm_usage(usage)
-        request_id = str(normalized.get("provider_request_id") or "")
-        if request_id:
-            usage_key = (
-                "llm:"
-                + str(self.pricing_snapshot.get("provider_profile_id") or "")
-                + ":"
-                + request_id
-            )
-        else:
-            usage_key = (
-                "llm:"
-                + str(context.attempt["id"])
-                + ":round:"
-                + str(int(self.checkpoint.get("round") or 0))
-            )
+        request_id = str(request["id"])
         with UnitOfWork(context.runtime.database) as uow:
             result = uow.task_runtime.record_provider_usage(
                 plan_id=context.plan["id"],
                 task_id=context.task["id"],
                 attempt_id=context.attempt["id"],
                 claim_token=context.claim["claim_token"],
-                usage_key=usage_key,
+                usage_key=f"provider-request:{request_id}",
                 source_type="llm",
                 provider_snapshot=self.pricing_snapshot,
                 pricing_snapshot=self.pricing_snapshot,
                 usage=usage,
+            )
+            uow.task_runtime.complete_provider_request(
+                request_id,
+                plan_id=context.plan["id"],
+                task_id=context.task["id"],
+                attempt_id=context.attempt["id"],
+                claim_token=context.claim["claim_token"],
+                provider_request_id=str(
+                    normalized.get("provider_request_id") or ""
+                ),
+                response=response,
+                usage=usage,
+                cost_entry_id=str(result["entry"]["id"]),
             )
         task_usage = dict(result.get("task_usage") or {})
         context.usage.update(task_usage)
@@ -233,6 +381,40 @@ class MeteredLLMAdapter:
             raise RuntimeBudgetExceeded(violation)
         return result
 
+    def _replay(self, binding, request_id: str) -> Iterator[ChatChunk]:
+        context = binding.context
+        with UnitOfWork(context.runtime.database) as uow:
+            replay = uow.task_runtime.replay_provider_request(request_id)
+        task_usage = dict(replay.get("task_usage") or {})
+        context.usage.update(task_usage)
+        self.checkpoint["cost_microunits"] = int(
+            task_usage.get("cost_microunits") or 0
+        )
+        request = dict(replay["request"])
+        response = dict(request.get("response") or {})
+        text = str(response.get("text") or "")
+        if text:
+            yield ChatChunk(kind="token", text=text)
+        for item in response.get("tool_calls") or []:
+            yield ChatChunk(
+                kind="tool_call",
+                tool_call=ToolCall(
+                    id=str(item.get("id") or ""),
+                    name=str(item.get("name") or ""),
+                    arguments=dict(item.get("arguments") or {}),
+                ),
+            )
+        usage = dict(response.get("usage") or request.get("usage") or {})
+        entry = replay.get("cost_entry") or {}
+        if entry:
+            usage["_cost_entry_id"] = str(entry.get("id") or "")
+            usage["_cost_microunits"] = int(
+                entry.get("amount_microunits") or 0
+            )
+        usage["_provider_request_ledger_id"] = request_id
+        yield ChatChunk(kind="usage", usage=usage)
+        yield ChatChunk(kind="done")
+
     def stream(
         self,
         messages: list[dict[str, Any]],
@@ -251,28 +433,106 @@ class MeteredLLMAdapter:
             return
 
         self._precheck(binding)
-        usage: dict[str, Any] = {}
-        stream = self.inner.stream(
+        request = self._prepare_request(
+            binding,
             messages,
             tools,
             max_tokens=max_tokens,
             temperature=temperature,
         )
-        try:
-            for chunk in stream:
-                if chunk.kind == "usage":
-                    if chunk.usage:
-                        usage.update(dict(chunk.usage))
-                    continue
-                if chunk.kind == "done":
-                    continue
-                yield chunk
-        finally:
-            close = getattr(stream, "close", None)
-            if close:
-                close()
+        if request["status"] == "completed":
+            yield from self._replay(binding, str(request["id"]))
+            return
+        started = self._start_request(binding, str(request["id"]))
+        violation = started.get("violation")
+        if violation:
+            raise RuntimeBudgetExceeded(violation)
+        if started.get("replay"):
+            yield from self._replay(binding, str(request["id"]))
+            return
+        request = dict(started["request"])
 
-        result = self._record(binding, usage)
+        usage: dict[str, Any] = {}
+        text_parts: list[str] = []
+        tool_calls: list[dict[str, Any]] = []
+        response_started = False
+        provider_token = bind_provider_request(
+            request_id=str(request["id"]),
+            idempotency_key=str(request["idempotency_key"]),
+            idempotency_header=str(request["idempotency_header"]),
+        )
+        try:
+            stream = self.inner.stream(
+                messages,
+                tools,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+            try:
+                for chunk in stream:
+                    if not response_started:
+                        self._mark_response_started(
+                            binding,
+                            str(request["id"]),
+                        )
+                        response_started = True
+                    if chunk.kind == "usage":
+                        if chunk.usage:
+                            usage.update(dict(chunk.usage))
+                        continue
+                    if chunk.kind == "done":
+                        continue
+                    if chunk.kind == "token":
+                        text_parts.append(chunk.text)
+                    elif (
+                        chunk.kind == "tool_call"
+                        and chunk.tool_call is not None
+                    ):
+                        tool_calls.append(
+                            {
+                                "id": chunk.tool_call.id,
+                                "name": chunk.tool_call.name,
+                                "arguments": deepcopy(
+                                    chunk.tool_call.arguments
+                                ),
+                            }
+                        )
+                    yield chunk
+            finally:
+                close = getattr(stream, "close", None)
+                if close:
+                    close()
+        except GeneratorExit:
+            try:
+                self._mark_failure(
+                    binding,
+                    str(request["id"]),
+                    GeneratorExit("Provider response consumer closed"),
+                    outcome_unknown=True,
+                )
+            except BaseException:
+                pass
+            raise
+        except Exception as exc:
+            known_rejection = _known_provider_rejection(exc)
+            result = self._mark_failure(
+                binding,
+                str(request["id"]),
+                exc,
+                outcome_unknown=not known_rejection,
+            )
+            if known_rejection or not request.get("idempotency_supported"):
+                raise RuntimeBudgetExceeded(result["violation"]) from None
+            raise
+        finally:
+            reset_provider_request(provider_token)
+
+        response = {
+            "text": "".join(text_parts),
+            "tool_calls": tool_calls,
+            "usage": deepcopy(usage),
+        }
+        result = self._record(binding, request, usage, response)
         normalized = dict(result["entry"].get("usage") or {})
         yielded_usage = dict(usage)
         yielded_usage.update(
@@ -292,6 +552,7 @@ class MeteredLLMAdapter:
                 "_provider_model_id": str(
                     normalized.get("provider_model_id") or ""
                 ),
+                "_provider_request_ledger_id": str(request["id"]),
                 "_cost_entry_id": result["entry"]["id"],
                 "_cost_microunits": int(
                     result["entry"]["amount_microunits"]
@@ -328,8 +589,8 @@ def install_agent_cost_metering() -> None:
             database,
             checkpoint,
         )
-        # Freeze price before opening an external Provider request. A crash
-        # after this commit can never reinterpret old usage with a new price.
+        # Freeze price and idempotency contract before opening an external
+        # Provider request. Recovery never reinterprets an existing request.
         binding.context.heartbeat(
             checkpoint=deepcopy(checkpoint),
             usage=costed_usage(checkpoint),

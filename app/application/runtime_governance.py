@@ -24,7 +24,7 @@ class PolicyApprovalRequired(BaseException):
 
 
 class RuntimeBudgetExceeded(BaseException):
-    """Control-flow signal raised only after usage has been durably recorded."""
+    """Control-flow signal raised only after governance state is durable."""
 
     def __init__(self, violation: dict[str, Any]):
         self.violation = dict(violation)
@@ -83,11 +83,17 @@ class GovernedTaskRuntime(TaskRuntime):
         normalized_kinds = tuple(kinds) if kinds is not None else None
         recovered = super().recover(kinds=normalized_kinds, now=now)
         with UnitOfWork(self.database) as uow:
+            unknown_requests = (
+                uow.task_runtime.recover_stale_provider_requests(
+                    kinds=normalized_kinds,
+                    now=now,
+                )
+            )
             expired = uow.task_runtime.expire_pending_policy_decisions(
                 kinds=normalized_kinds,
                 now=now,
             )
-        return recovered + expired
+        return recovered + unknown_requests + expired
 
 
 __all__ = [
