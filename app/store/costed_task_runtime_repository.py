@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from app.application.jobs.runtime_contract import RUNTIME_JOB_PLAN_KINDS
 from app.domain.project import ProjectSettings, RuntimeCostPolicy
 from app.domain.provider_pricing import (
     normalize_microunits,
@@ -28,6 +29,9 @@ from .task_runtime_extensions import AGENT_PLAN_KIND
 from .task_runtime_governance import GovernedTaskRuntimeRepository
 
 DEFAULT_AGENT_MAX_COST_MICROUNITS = 10_000_000
+COST_GOVERNED_PLAN_KINDS = frozenset(
+    {AGENT_PLAN_KIND, *RUNTIME_JOB_PLAN_KINDS}
+)
 
 
 class CostedTaskRuntimeRepository(
@@ -89,7 +93,7 @@ class CostedTaskRuntimeRepository(
             )
 
         normalized_policy = deepcopy(policy or {})
-        if str(kind) == AGENT_PLAN_KIND:
+        if str(kind) in COST_GOVERNED_PLAN_KINDS:
             configured = normalized_policy.get("provider_cost_policy")
             if configured is None:
                 configured = self._project_provider_cost_policy(project_id)
@@ -113,6 +117,7 @@ class CostedTaskRuntimeRepository(
 
 
 __all__ = [
+    "COST_GOVERNED_PLAN_KINDS",
     "CostedTaskRuntimeRepository",
     "DEFAULT_AGENT_MAX_COST_MICROUNITS",
 ]
