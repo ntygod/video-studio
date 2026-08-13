@@ -6,7 +6,9 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
+from app.api.command_context import command_context
 from app.api.logging import current_request_id
+from app.application.commands import CreateJobCommand, get_command_bus
 from app.application.job_engine import get_job_engine
 from app.application.jobs.events import list_job_events_after
 from app.application.jobs.lifecycle import reset_job_for_retry
@@ -61,11 +63,17 @@ def list_jobs(
 
 @router.post("", status_code=201)
 def post_job(data: JobCreate, request: Request):
-    with UnitOfWork(request.app.state.database) as uow:
-        uow.projects.get(data.project_id)
-        payload = dict(data.payload)
-        payload.setdefault("_request_id", current_request_id())
-        job = uow.jobs.create({**data.model_dump(), "payload": payload})
+    payload = dict(data.payload)
+    payload.setdefault("_request_id", current_request_id())
+    job = get_command_bus(request.app).execute(
+        CreateJobCommand(
+            project_id=data.project_id,
+            unit_id=data.unit_id,
+            job_type=data.job_type,
+            payload=payload,
+        ),
+        command_context(request),
+    ).result
     get_job_engine(request.app).submit(job["id"])
     return job
 
