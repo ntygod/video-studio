@@ -8,6 +8,9 @@ import httpx
 
 from app.integrations.provider_http import provider_endpoint, provider_headers
 from app.integrations.provider_request import provider_request_headers
+from app.integrations.provider_response_identity import (
+    observe_provider_response,
+)
 
 from .base import ChatChunk, LLMConfigurationError, ToolCall, ToolSpec
 
@@ -89,6 +92,9 @@ class JsonProtocolAdapter:
         )
         response.raise_for_status()
         payload = response.json()
+        response_id = str(payload.get("id") or "")
+        response_model = str(payload.get("model") or self.model)
+        observe_provider_response(response_id, response_model)
         content = (
             payload.get("choices", [{}])[0]
             .get("message", {})
@@ -117,9 +123,7 @@ class JsonProtocolAdapter:
                 text=json.dumps(parsed, ensure_ascii=False),
             )
         usage = dict(payload.get("usage") or {})
-        usage["_provider_request_id"] = str(payload.get("id") or "")
-        usage["_provider_model_id"] = str(
-            payload.get("model") or self.model
-        )
+        usage["_provider_request_id"] = response_id
+        usage["_provider_model_id"] = response_model
         yield ChatChunk(kind="usage", usage=usage)
         yield ChatChunk(kind="done")
