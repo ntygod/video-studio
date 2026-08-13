@@ -7,6 +7,9 @@ import httpx
 
 from app.integrations.provider_http import provider_endpoint, provider_headers
 from app.integrations.provider_request import provider_request_headers
+from app.integrations.provider_response_identity import (
+    observe_provider_response,
+)
 
 from .base import ChatChunk, LLMConfigurationError, ToolCall, ToolSpec
 
@@ -98,6 +101,7 @@ class OpenAIAdapter:
                     response_model = str(
                         event.get("model") or response_model
                     )
+                    observe_provider_response(response_id, response_model)
                     if isinstance(event.get("usage"), dict):
                         final_usage = dict(event["usage"])
                     choices = event.get("choices") or []
