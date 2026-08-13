@@ -6,12 +6,15 @@ import {
     approveRuntimePolicyDecision,
     denyRuntimePolicyDecision,
     getActiveConversationTurn,
+    getProjectRuntimeCostPolicy,
     getTurnRuntimeBudget,
     listProjectPolicyDecisions,
     listTurnPolicyDecisions,
     listTurnRuntimeCosts,
+    patchProjectRuntimeCostPolicy,
     type RuntimePolicyDecision,
     type RuntimePolicyDecisionStatus,
+    type UnpricedProviderMode,
 } from "@/services/api";
 import { qk } from "./keys";
 
@@ -68,6 +71,41 @@ export function useProjectPolicyDecisions(
         staleTime: 2_000,
         refetchInterval: 5_000,
         refetchOnWindowFocus: true,
+    });
+}
+
+export function useProjectRuntimeCostPolicy(projectId: string) {
+    return useQuery({
+        queryKey: qk.projectRuntimeCostPolicy(projectId),
+        queryFn: () => getProjectRuntimeCostPolicy(projectId),
+        enabled: Boolean(projectId),
+        staleTime: 10_000,
+        refetchOnWindowFocus: true,
+    });
+}
+
+export function useUpdateProjectRuntimeCostPolicy(projectId: string) {
+    const client = useQueryClient();
+    return useMutation({
+        mutationFn: ({
+            expectedRevision,
+            mode,
+        }: {
+            expectedRevision: number;
+            mode: UnpricedProviderMode;
+        }) =>
+            patchProjectRuntimeCostPolicy(projectId, {
+                expected_revision: expectedRevision,
+                unpriced_provider_mode: mode,
+            }),
+        onSuccess: (state) => {
+            client.setQueryData(
+                qk.projectRuntimeCostPolicy(projectId),
+                state,
+            );
+            client.invalidateQueries({ queryKey: qk.project(projectId) });
+            client.invalidateQueries({ queryKey: qk.projects() });
+        },
     });
 }
 

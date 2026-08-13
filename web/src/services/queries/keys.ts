@@ -44,6 +44,8 @@ export const qk = {
         ["turn-policy-decisions", turnId] as const,
     projectPolicyDecisions: (projectId: string, status = "pending") =>
         ["project-policy-decisions", projectId, status] as const,
+    projectRuntimeCostPolicy: (projectId: string) =>
+        ["project-runtime-cost-policy", projectId] as const,
     turnRuntimeBudget: (turnId: string) =>
         ["turn-runtime-budget", turnId] as const,
     turnRuntimeCosts: (turnId: string) =>

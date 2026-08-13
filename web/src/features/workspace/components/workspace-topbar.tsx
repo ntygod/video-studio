@@ -5,6 +5,7 @@ import Link from "next/link";
 
 import { ThemePreferenceMenu } from "@/features/theme/components/theme-preference-menu";
 import { ApprovalCenter } from "@/features/workspace/components/approval-center";
+import { CostGovernanceCenter } from "@/features/workspace/components/cost-governance-center";
 import { FreshnessCenter } from "@/features/workspace/components/freshness-center";
 import { useWorkspaceData } from "@/features/workspace/hooks/use-workspace-data";
 import { usePathname } from "next/navigation";
@@ -21,12 +22,6 @@ type ViewTab = {
     icon: typeof FileText;
 };
 
-/**
- * 画布视图。
- * <p>
- * P0 只是把原来的四个 antd Tab 搬到路由上；分镜（board）与时间线（timeline）
- * 分别在 P2 / P4 加入。
- */
 const VIEW_TABS: ViewTab[] = [
     { view: "brief", label: "策划", icon: Compass },
     { view: "story", label: "稿件", icon: FileText },
@@ -48,7 +43,6 @@ export function WorkspaceTopbar() {
     const setAgentDrawer = useWorkspaceStore((state) => state.setAgentDrawer);
     const setCommandPalette = useWorkspaceStore((state) => state.setCommandPalette);
 
-    // 窄屏下两侧是抽屉，按钮改为打开抽屉而不是切换折叠。
     const structureInline = useIsStructureInline();
     const agentInline = useIsAgentInline();
 
@@ -162,6 +156,7 @@ export function WorkspaceTopbar() {
 
             <div className="flex shrink-0 items-center gap-1">
                 <ApprovalCenter projectId={projectId} />
+                <CostGovernanceCenter projectId={projectId} />
                 <FreshnessCenter projectId={projectId} />
                 <Tooltip title="命令面板（⌘K）">
                     <Button

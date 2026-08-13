@@ -1,9 +1,15 @@
 "use client";
 
-import { get, post, seg } from "./http";
+import { get, patch, post, seg } from "./http";
 import { activeConversationTurnFromPlans } from "./runtime-policy-helpers";
+import type { UnpricedProviderMode } from "./runtime-cost-policy-helpers";
 
 export { activeConversationTurnFromPlans } from "./runtime-policy-helpers";
+export {
+    normalizeUnpricedProviderMode,
+    runtimeCostPolicyMeta,
+} from "./runtime-cost-policy-helpers";
+export type { UnpricedProviderMode } from "./runtime-cost-policy-helpers";
 
 export type RuntimePolicyDecisionStatus =
     | "allowed"
@@ -54,6 +60,14 @@ export type RuntimePlanSummary = {
 
 export type RuntimeProjectPolicyDecision = RuntimePolicyDecision & {
     plan: RuntimePlanSummary;
+};
+
+export type ProjectRuntimeCostPolicyState = {
+    project_id: string;
+    revision: number;
+    policy: {
+        unpriced_provider_mode: UnpricedProviderMode;
+    };
 };
 
 export type RuntimeBudgetState = {
@@ -138,6 +152,25 @@ export function listProjectPolicyDecisions(
     return get<RuntimeProjectPolicyDecision[]>(
         `/api/projects/${seg(projectId)}/runtime-policy-decisions`,
         { status, kind, limit },
+    );
+}
+
+export function getProjectRuntimeCostPolicy(projectId: string) {
+    return get<ProjectRuntimeCostPolicyState>(
+        `/api/projects/${seg(projectId)}/runtime-cost-policy`,
+    );
+}
+
+export function patchProjectRuntimeCostPolicy(
+    projectId: string,
+    input: {
+        expected_revision: number;
+        unpriced_provider_mode: UnpricedProviderMode;
+    },
+) {
+    return patch<ProjectRuntimeCostPolicyState>(
+        `/api/projects/${seg(projectId)}/runtime-cost-policy`,
+        input,
     );
 }
 
